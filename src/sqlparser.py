@@ -7,7 +7,7 @@ class DFS:
 	"""
 	Construct tree using Depth First Search from nested intervals.
 	"""
-	def __init__(self, root_start, child_starts, stops):
+	def __init__(self, root_start: int, child_starts: list, stops: list) -> None:
 		self._parent_this = deque([root_start])  # DFS Seen LHS
 		self._child_starts = deque(child_starts)  # DFS Unseen LHS
 		self._stops = deque(stops)  # DFS Unseen RHS
