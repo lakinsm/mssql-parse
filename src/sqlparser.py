@@ -7,13 +7,40 @@ class DFS:
 	"""
 	Construct tree using Depth First Search from nested intervals.
 	"""
-	def __init__(self, root_start: int, child_starts: list, stops: list) -> None:
-		self._parent_this = deque([root_start])  # DFS Seen LHS
-		self._child_starts = deque(child_starts)  # DFS Unseen LHS
-		self._stops = deque(stops)  # DFS Unseen RHS
-		self.tree = {0: []}  # Map: parent_node_idx -> [children_idx,]
-		self.levels = {0: [0]}  # Map: tree_level -> [node_idx,]
-		self.intervals = {0: [root_start, None]}  # Map: node_idx -> [char_start_idx, char_stop_idx]
+	def __init__(self, starts: list, stops: list) -> None:
+		self._seen = deque()  # DFS seen nodes
+		self._lhs = deque(starts)  # DFS unseen LHS
+		self._rhs = deque(stops)  # DFS unseen RHS
+		self.tree = {}  # Map: parent_node_idx -> [children_idx,]
+		self.levels = {}  # Map: tree_level -> [node_idx,]
+		self.intervals = {}  # Map: node_idx -> [char_start_idx, char_stop_idx]
+		self.traversal = ()
+		self.dfs(0)
+	
+	def dfs(self, node):
+		if not self._rhs:
+			return
+		elif not self._lhs:
+			self._close_node(self._rhs.popleft())
+			self.dfs(self._seen.pop())  # up to parent
+		elif self._rhs[0] < self._lhs[0]:
+			self._close_node(self._rhs.popleft())
+			self.dfs(self._seen.pop())  # up to parent
+		elif self._lhs[0] < self._rhs[0]:
+			self._open_node(node, self._lhs.popleft(), self._rhs.popleft())
+			self.dfs(len(self.tree))  # down to child
+		else:
+			sys.stderr.write('ERROR: DFS.dfs() should not reach\n')
+			raise ValueError
+		
+	
+	def _open_node(self, node: int, start: int, stop: int) -> None:
+		x = 1
+
+	def _close_node(self, stop: int) -> None:
+		x = 1
+
+
 
 
 class SQLNode:
@@ -45,7 +72,5 @@ if __name__ == '__main__':
 	"""
 	opens = [match.start() for match in re.finditer(re.escape('('), example1_nested)]
 	closes = [match.start() for match in re.finditer(re.escape(')'), example1_nested)]
-	dfs = DFS(opens[0], opens[1:], closes)
-
-	print(dfs._parent_this, dfs._child_starts, dfs._stops)
+	dfs = DFS(opens, closes)
 	
