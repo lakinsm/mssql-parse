@@ -14,21 +14,21 @@ class DFS:
 		self.tree = {}  # Map: parent_node_idx -> [children_idx,]
 		self.levels = {}  # Map: tree_level -> [node_idx,]
 		self.intervals = {}  # Map: node_idx -> [char_start_idx, char_stop_idx]
-		self.traversal = ()
-		self.dfs(0)
+		self.traversal = ()  # Tuple: (node_idx, ) traversal order
+		self._dfs(0)
 	
-	def dfs(self, node):
+	def _dfs(self, node):
 		if not self._rhs:
 			return
 		elif not self._lhs:
 			self._close_node(self._rhs.popleft())
-			self.dfs(self._seen.pop())  # up to parent
+			self._dfs(self._seen.pop())  # up to parent
 		elif self._rhs[0] < self._lhs[0]:
 			self._close_node(self._rhs.popleft())
-			self.dfs(self._seen.pop())  # up to parent
+			self._dfs(self._seen.pop())  # up to parent
 		elif self._lhs[0] < self._rhs[0]:
 			self._open_node(node, self._lhs.popleft(), self._rhs.popleft())
-			self.dfs(len(self.tree))  # down to child
+			self._dfs(len(self.tree))  # down to child
 		else:
 			sys.stderr.write('ERROR: DFS.dfs() should not reach\n')
 			raise ValueError
