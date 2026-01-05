@@ -18,6 +18,8 @@ class DFS:
 		self.traversal = ()  # Tuple: (node_idx, ) traversal order
 
 		assert(len(starts) == len(stops))
+		if not starts:
+			return
 		self._dfs(0)
 	
 	def _dfs(self, node):
@@ -45,41 +47,96 @@ class DFS:
 		self._dfs(self._parent.pop())  # up to parent
 
 
+class SQLElement:
+	"""
+	One clause of SQL (sub-)query.
+	"""
+	def __init__(self):
+		self.text = ''
+		self.tables = []
+
+
 class SQLNode:
 	"""
 	One (sub-)query and its components.
 	"""
-	def __init__(self, query_text: str) -> None:
-		self.select = ''
-		self.from_ = ''
-		self.join = ''
-		self.where = ''
-		self.groupby = ''
-		self.orderby = ''
-		self.row_ops = ''
-
+	def __init__(self, query_text: str, row_ops: list = []) -> None:
+		self.internal_degree = len(row_ops)
+		self.row_ops = row_ops
+		self.select = [SQLElement()] * self.internal_degree
+		self.from_ = [SQLElement()] * self.internal_degree
+		self.join = [SQLElement()] * self.internal_degree
+		self.where = [SQLElement()] * self.internal_degree
+		self.groupby = [SQLElement()] * self.internal_degree
+		self.orderby = [SQLElement()] * self.internal_degree
+		
 
 class SQLTree:
 	"""
 	Stores query node types and relationships in tree structures.
 	"""
-	def __init__(self, full_query_text: str, ignore_strings = True) -> None:
+	def __init__(
+			self, 
+			full_query_text: str, 
+			ignore_strings: bool = True, 
+			ignore_comments: bool = True,
+			flatten: bool = True,
+			pprint: bool = True
+	) -> None:
 		self._ignore_idxs = set()
 		self.variables = {}
 		self.tree = {}
-		opens = [match.start() for match in re.finditer(re.escape('('), full_query_text)]
-		closes = [match.start() for match in re.finditer(re.escape(')'), full_query_text)]
+		self.original_query = full_query_text
+		self.flattened_query = None
+		self.working_query = full_query_text
+		if ignore_comments:
+			self.working_query = self._remove_comments(self.working_query)
+		
+		if flatten:
+			self.flattened_query = self._flatten(self.working_query)
+			self.working_query = self.flattened_query
+		
+		opens = [match.start() for match in re.finditer(re.escape('('), self.working_query)]
+		closes = [match.start() for match in re.finditer(re.escape(')'), self.working_query)]
 		if ignore_strings:
-			quote_idxs = [m.start() for m in re.finditer('[\'"]', full_query_text)]
+			quote_idxs = [m.start() for m in re.finditer('[\'"]', self.working_query)]
 			assert(len(quote_idxs) % 2 == 0)
 			self._ignore_idxs = set([y for x in [list(range(quote_idxs[i], quote_idxs[i+1])) 
 												for i in range(0, len(quote_idxs), 2)] 
 									for y in x])
 			opens = [x for x in opens if x not in self._ignore_idxs]
 			closes = [x for x in closes if x not in self._ignore_idxs]
-			print(self._ignore_idxs)
 		self.dfs = DFS(opens, closes)
 
+	def __repr__(self):
+		"""
+		Print representation 
+		"""
+		x = 1
+	
+	def _remove_comments(self, query_text: str) -> str:
+		"""
+		Remove block and inline comments from query text
+		"""
+		block_starts = [match.start() for match in re.finditer(re.escape('/*'), query_text)]
+		block_stops = [match.end() for match in re.finditer(re.escape('*/'), query_text)]
+		block = DFS(block_starts, block_stops)
+		inline_matches = re.finditer(r'--.*$', query_text, re.MULTILINE)
+		try:
+			inline_starts, inline_stops = zip(*[(match.start(), match.end()) for match in inline_matches])
+		except ValueError:
+			inline_starts, inline_stops = [], []
+		inline = DFS(inline_starts, inline_stops)
+		comment_idxs = set([x for y in 
+					  		[range(m, n) for m, n in list(block.intervals.values()) + list(inline.intervals.values())] 
+							for x in y])
+		return ''.join([x for i, x in enumerate(query_text) if i not in comment_idxs])
+	
+	def _flatten(self, query_text: str) -> str:
+		flattened = re.sub(r'\s', ' ', query_text)
+		flattened = re.sub(r'\s{2,}', ' ', flattened)
+		flattened = flattened.strip()
+		return flattened
 
 
 if __name__ == '__main__':
@@ -104,4 +161,60 @@ if __name__ == '__main__':
 	assert(dfs.tree == sqltree.dfs.tree)
 	assert(dfs.levels == sqltree.dfs.levels)
 	assert(dfs.intervals == sqltree.dfs.intervals)
-	
+
+	example3_comments = """
+		/* This is an example query with comments.
+		Select the following examples from example
+		for example and order by example.
+		*/
+		BEGIN
+
+		-- Some variable definitions
+		DECLARE mychar1 = NVARCHAR(80);
+		SET mychar1 = 'example4';
+
+		SELECT 
+			mytable1.*,
+			mytable2.foo1,
+			mytable2.bar1,
+			mytable3.foo1 AS "t3foo1",
+			mytable4.bar2,  -- Example comment
+			mytable5.*
+		FROM mytable1
+		JOIN mytable2
+			ON mytable1.key1 = mytable2.key1
+			AND mytable1.var1 = 'example'
+		-- This table join is necessary
+		FULL JOIN mytable3
+			ON mytable2.key2 = mytable3.key1
+		LEFT JOIN mytable4
+			ON mytable3.key3 = mytable4.key1
+			AND mytable2.key1 = mytable4.key2
+			AND mytable1.key2 = mytable4.key3
+		RIGHT JOIN mytable5
+			ON mytable1.key1 = mytable5.key1
+		
+		UNION ALL  -- Introduce internal degree
+
+		SELECT
+			mytable3.*,
+			mytable4.*
+		FROM mytable3
+		JOIN mytable4
+			ON mytable3.key3 = mytable4.key1
+		JOIN (  -- Subquery calculates group sum from most recent date
+			SELECT groupid1, MAX(field1), SUM(field2) FROM mytable6 WHERE foobar = 'example2' 
+			GROUP BY groupid1
+		) AS "groupsum"
+		WHERE mytable3.field5 = "bar4"
+		ORDER BY mytable1.key1 DESC  -- Order by request of end users
+		
+		END;
+
+		/*
+		-- Trailing comment with indentation formatting because?
+		" foo ' example ( bar)
+		*/
+	"""
+	sqltree = SQLTree(example3_comments)
+	print(sqltree.working_query)
