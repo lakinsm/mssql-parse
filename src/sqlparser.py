@@ -53,6 +53,7 @@ class SQLElement:
 	"""
 	def __init__(self):
 		self.text = ''
+		self.fields = []
 		self.tables = []
 
 
@@ -74,6 +75,16 @@ class SQLNode:
 class SQLTree:
 	"""
 	Stores query node types and relationships in tree structures.
+	Assumptions:
+		- Only a single query statement is contained within
+		- BEGIN and END are optional
+		- Variable definitions can optionally be terminated with semi-colons
+		- Only one other semi-colon exists to denote the end of the actual query
+		- All (sub-)queries contain a single SELECT statement, which represent single nodes
+		- (Sub-)queries with row operations (UNION, INTERSECT, EXCEPT) represent a single node with degree > 0
+		- Aliases will be replaced where applicable unless specified otherwise or:
+			-- Aliases are a part of a mutated (sub-)query and not directly queried
+			-- Aliases name a self join or table joined again in the same context with different join conditions
 	"""
 	def __init__(
 			self, 
@@ -81,14 +92,58 @@ class SQLTree:
 			ignore_strings: bool = True, 
 			ignore_comments: bool = True,
 			flatten: bool = True,
+			expand_aliases: bool = True,
 			pprint: bool = True
 	) -> None:
 		self._ignore_idxs = set()
+		self._pprint = pprint
+		self._outer_statements = []
+		self._typemap = {
+			'NVARCHAR': 'TEXT',
+			'VARCHAR': 'TEXT',
+			'NCHAR': 'TEXT',
+			'CHAR': 'TEXT',
+			'BINARY': 'TEXT',
+			'VARBINARY': 'TEXT',
+			'TEXT': 'TEXT',
+			'TINYTEXT': 'TEXT',
+			'MEDIUMTEXT': 'TEXT',
+			'LONGTEXT': 'TEXT',
+			'TINYBLOB': 'BLOB',
+			'MEDIUMBLOB': 'BLOB',
+			'LONGBLOB': 'BLOB',
+			'BIT': 'INTEGER',
+			'TINYINT': 'INTEGER',
+			'BOOL': 'INTEGER',
+			'SMALLINT': 'INTEGER',
+			'MEDIUMINT': 'INTEGER',
+			'INT': 'INTEGER',
+			'INTEGER': 'INTEGER',
+			'BIGINT': 'INTEGER',
+			'SMALLMONEY': 'REAL',
+			'MONEY': 'REAL',
+			'FLOAT': 'REAL',
+			'DOUBLE': 'REAL',
+			'DECIMAL': 'REAL',
+			'DEC': 'REAL',
+			'REAL': 'REAL',
+			'DATE': 'TEXT',
+			'DATETIME': 'TEXT',
+			'DATETIME2': 'TEXT',
+			'SMALLDATETIME': 'TEXT',
+			'DATETIMEOFFSET': 'TEXT',
+			'TIMESTAMP': 'TEXT',
+			'TIME': 'TEXT',
+			'YEAR': 'TEXT'
+		}
 		self.variables = {}
 		self.tree = {}
 		self.original_query = full_query_text
 		self.flattened_query = None
 		self.working_query = full_query_text
+		if not full_query_text:
+			sys.stderr.write('ERROR: query text passed to SQLTree must not be empty\n')
+			raise ValueError
 		if ignore_comments:
 			self.working_query = self._remove_comments(self.working_query)
 		
@@ -106,13 +161,34 @@ class SQLTree:
 									for y in x])
 			opens = [x for x in opens if x not in self._ignore_idxs]
 			closes = [x for x in closes if x not in self._ignore_idxs]
+
+		# Create tree
+		# Break query into statements
+		self.working_query = re.sub(r'^\s*begin', '', self.working_query, flags=re.IGNORECASE)
+		self.working_query = re.sub(r'\s*end\s*;?\s*$', '', self.working_query, flags=re.IGNORECASE)
+		self.working_query = re.sub(r'^\s*', '', self.working_query)
+		self.working_query = re.sub(r'\s*$', '', self.working_query)
+		if 'SELECT' not in self.working_query.upper():
+			sys.stderr.write('ERROR: query text passed to SQLTree must contain a SELECT statement')
+		statements = self.working_query.split(';')
+		selects = ['SELECT' in x.upper() for x in statements]
+		if selects.count(True) > 1:
+			sys.stderr.write('ERROR: query text passed to SQLTree must contain only one SELECT statement')
+		print(selects)		
+		
+		# DFS -> tree by subquery
 		self.dfs = DFS(opens, closes)
 
-	def __repr__(self):
+
+
+	def __repr__(self) -> str:
 		"""
 		Print representation 
 		"""
-		x = 1
+		if self._pprint:
+			return self._prettyprint()
+		else:
+			return self.working_query
 	
 	def _remove_comments(self, query_text: str) -> str:
 		"""
@@ -133,10 +209,19 @@ class SQLTree:
 		return ''.join([x for i, x in enumerate(query_text) if i not in comment_idxs])
 	
 	def _flatten(self, query_text: str) -> str:
+		"""
+		Remove all white space except spaces for internal processing or compact representation
+		"""
 		flattened = re.sub(r'\s', ' ', query_text)
 		flattened = re.sub(r'\s{2,}', ' ', flattened)
 		flattened = flattened.strip()
 		return flattened
+	
+	def _prettyprint(self) -> str:
+		"""
+		Format query to be more readable using internal structure information
+		"""
+
 
 
 if __name__ == '__main__':
@@ -150,7 +235,7 @@ if __name__ == '__main__':
 	print('Levels: {}'.format(dfs.levels))
 	print('Intervals: {}\n'.format(dfs.intervals))
 
-	example2_nested = '1(3(5(7)9(12)15(18)21(24(27(30)33)36)39)42)45(48(51)54)57(60)63(66(69)72)")"\')\''
+	example2_nested = '1(3(5(7)9(12)15(18)21(24(27(30)33)36)39)42)45(48(51)54)57(60)63(66(69)72)")"\')\' SELECT'
 	sqltree = SQLTree(example2_nested)
 	print(example2_nested)
 	print('Traversal: {}'.format(sqltree.dfs.traversal))
