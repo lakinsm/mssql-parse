@@ -150,7 +150,25 @@ class SQLTree:
 		if flatten:
 			self.flattened_query = self._flatten(self.working_query)
 			self.working_query = self.flattened_query
+
+		# Create tree
+		# Break query into statements
+		self.working_query = re.sub(r'^\s*begin', '', self.working_query, flags=re.IGNORECASE)
+		self.working_query = re.sub(r'\s*end\s*;?\s*$', '', self.working_query, flags=re.IGNORECASE)
+		self.working_query = self._remove_whitespace(self.working_query)
 		
+		if 'SELECT' not in self.working_query.upper():
+			sys.stderr.write('ERROR: query text passed to SQLTree must contain a SELECT statement')
+		statements = [self._remove_whitespace(x) for x in self.working_query.split(';')]
+		selects = ['SELECT' in x.upper() for x in statements]
+		if selects.count(True) > 1:
+			sys.stderr.write('ERROR: query text passed to SQLTree must contain only one SELECT statement')
+		
+		for s in statements:
+			self._extract_variables(s)
+		self.working_query = statements[selects.index(True)]
+		
+		# DFS -> tree by subquery
 		opens = [match.start() for match in re.finditer(re.escape('('), self.working_query)]
 		closes = [match.start() for match in re.finditer(re.escape(')'), self.working_query)]
 		if ignore_strings:
@@ -161,25 +179,7 @@ class SQLTree:
 									for y in x])
 			opens = [x for x in opens if x not in self._ignore_idxs]
 			closes = [x for x in closes if x not in self._ignore_idxs]
-
-		# Create tree
-		# Break query into statements
-		self.working_query = re.sub(r'^\s*begin', '', self.working_query, flags=re.IGNORECASE)
-		self.working_query = re.sub(r'\s*end\s*;?\s*$', '', self.working_query, flags=re.IGNORECASE)
-		self.working_query = re.sub(r'^\s*', '', self.working_query)
-		self.working_query = re.sub(r'\s*$', '', self.working_query)
-		if 'SELECT' not in self.working_query.upper():
-			sys.stderr.write('ERROR: query text passed to SQLTree must contain a SELECT statement')
-		statements = self.working_query.split(';')
-		selects = ['SELECT' in x.upper() for x in statements]
-		if selects.count(True) > 1:
-			sys.stderr.write('ERROR: query text passed to SQLTree must contain only one SELECT statement')
-		print(selects)		
-		
-		# DFS -> tree by subquery
 		self.dfs = DFS(opens, closes)
-
-
 
 	def __repr__(self) -> str:
 		"""
@@ -189,6 +189,23 @@ class SQLTree:
 			return self._prettyprint()
 		else:
 			return self.working_query
+		
+	def _remove_whitespace(self, query_text: str) -> str:
+		return re.sub(r'^\s*', '', re.sub(r'\s*$', '', query_text))
+	
+	def _extract_variables(self, query_text:str) -> None:
+		match = re.search(r'declare (\S+) = ([A-Za-z2]+)[\(;]?', query_text, flags=re.IGNORECASE)
+		# print(x for x in match)
+		if match:
+			varname = match.group(1)
+			vartype = match.group(2)
+			self.variables[varname] = [vartype, None]
+		match = re.search(r'set (\S+) = [\"\']?([^\s()\"\']+)[\"\']?[;]?', query_text, flags=re.IGNORECASE)
+		# print(x for x in match)
+		if match:
+			varname = match.group(1)
+			varvalue = match.group(2)
+			self.variables[varname][1] = varvalue
 	
 	def _remove_comments(self, query_text: str) -> str:
 		"""
