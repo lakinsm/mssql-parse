@@ -3,7 +3,7 @@ import sys
 from collections import deque
 
 
-def isnamed(query_text: str, start_idx: int, stop_idx: int) -> tuple[bool, list]:
+def isnamed(query_text: str) -> tuple[bool, list]:
 	"""
 	Is this (sub-)query or SQL element named (adjacent to an AS)?
 
@@ -11,13 +11,15 @@ def isnamed(query_text: str, start_idx: int, stop_idx: int) -> tuple[bool, list]
 				(bool, [(str(col_nam), str(alias_name),]) if object
 	"""
 	# Check prefix
-	prefix = re.search(r'[ \t]*[\"\[]?([^\s()\"\\[\]\']+)[\"\]]?[ \t\r\n]+AS[ \t\r\n]+\(', query_text, flags=re.IGNORECASE | re.MULTILINE)
-	suffix = re.search(r'\)[ \t\r\n]+AS[ \t\r\n]+[\"\[]?([^\s()\"\'\]\[]+)[\"\]]?[ \t\r\n]+', query_text, flags=re.IGNORECASE | re.MULTILINE)
-	object = re.finditer(r'[ \t]*[\"\[]?([^\s()\"\'\[\]]+)[\"\]]?[ \t\r\n]+AS[ \t\r\n]+[\"\']?([^\s()\"\']+)[\"\']?[ \t]*,?[ \t\r\n]+', query_text, flags=re.IGNORECASE | re.MULTILINE)
+	prefix = re.search(r'[ \t]*[\"\[]?([^\s()\"\\[\]\']+)[\"\]]?[ \t\r\n]+AS[ \t\r\n]*\(', query_text, flags=re.IGNORECASE | re.MULTILINE)
+	suffix = re.search(r'\)[ \t\r\n]*AS[ \t\r\n]+[\"\[]?([^\s()\"\'\]\[]+)[\"\]]?[ \t\r\n]*', query_text, flags=re.IGNORECASE | re.MULTILINE)
+	object = re.finditer(r'[ \t]*[\"\[]?([^\s()\"\'\[\]]+)[\"\]]?[ \t\r\n]+AS[ \t\r\n]+[\"\']?([^\s()\"\']+)[\"\']?[ \t]*,?[ \t\r\n]*', query_text, flags=re.IGNORECASE | re.MULTILINE)
 
 	query_val = [bool(x) for x in [prefix, suffix]]
-	assert(query_val.count(True) <= 1)
-	query_name = [prefix, suffix][query_val.index(True)]
+	true_count = query_val.count(True)
+	assert(true_count <= 1)
+	if true_count:
+		query_name = [prefix, suffix][query_val.index(True)]
 	ret_bool = True if any([prefix, suffix, object]) else False
 	if ret_bool:
 		if any(query_val):
@@ -49,12 +51,12 @@ def issubquery(query_text: str, require_name: bool = False) -> bool:
 	except ValueError:
 		return parentheses
 	try:
-		closing = query_text.index(')')
+		closing = query_text.rfind(')')
 	except ValueError:
 		return parentheses
 	parentheses = opening < closing
 	try:
-		select_idx = re.search(r'select', query_text[(opening+1):closing], flags=re.IGNORECASE).start()
+		select_idx = re.search(r'select', query_text, flags=re.IGNORECASE).start()
 	except AttributeError:
 		return select
 	select = opening < select_idx < closing
@@ -75,6 +77,7 @@ class DFS:
 		self.levels = {}  # Map: tree_level -> [node_idx,]
 		self.intervals = {}  # Map: node_idx -> [char_start_idx, char_stop_idx]
 		self.traversal = ()  # Tuple: (node_idx, ) traversal order
+		self.node_order = ()  # Tuple: (node_idx, ) unique DFS node order
 
 		assert(len(starts) == len(stops))
 		if not starts:
@@ -83,6 +86,8 @@ class DFS:
 	
 	def _dfs(self, node: int) -> None:
 		self.traversal += (node,)
+		if node not in self.node_order:
+			self.node_order += (node,)
 		if node not in self.tree:
 			self.levels.setdefault(self._level, []).append(node)
 			self.tree[self._parent[-1]].append(node)
@@ -248,7 +253,10 @@ class SQLTree:
 		self.flattened_query = None
 		self.symbolic_query = ''
 		self.symbolic_intervals = {}
+		self.symbolic_clauses = {}
 		self.working_query = full_query_text
+		self.ctes = {}
+		self.subqueries = {}
 		if not full_query_text:
 			sys.stderr.write('ERROR: query text passed to SQLTree must not be empty\n')
 			raise ValueError
@@ -289,18 +297,38 @@ class SQLTree:
 			closes = [x for x in closes if x not in self._ignore_idxs]
 		self.dfs = DFS(opens, closes)
 
-		# Initiatlize symbolic query by replacing parentheticals temporarily
+		# Initiatlize symbolic query and SQLNode objects
 		self._init_symbolic_query()
-		print(self.symbolic_query)
-		# sys.exit()
 
-		# Check for CTE with leaf -> root traversal
-		for node in self.dfs.bfs(descending=False):
+		# Identify subqueries and CTEs
+		for node in self.dfs.node_order:
 			if node != 0:
 				start, stop = self.dfs.intervals[node]
-				subquery_context = self._get_query_context(self.working_query, start, stop, include_body=False)
-				ctes = {node: self._iscte(subquery_context, node)}
-				print(node, start, stop, ctes[node])
+				pretext, posttext = self._get_query_context(self.working_query, start, stop)
+				with_context = '{} {} {}'.format( pretext, self.symbolic_clauses[node], posttext)
+				cte_flag = self._iscte(
+					 # symbolic_clause to avoid detecting nested selects
+					with_context, 
+					node
+				)
+				subquery_flag = issubquery(self.symbolic_clauses[node], require_name=True)
+
+				if cte_flag:
+					self.ctes[node] = isnamed(with_context)[1][0]
+				if subquery_flag:
+					subquery_name = isnamed(with_context)
+					if subquery_name[0]:
+						self.subqueries[node] = subquery_name[1][0]
+					else:
+						self.subqueries[node] = None  # subqueries can be inline and not named
+				if cte_flag:
+					cte_val = self.ctes[node] + ' - CTE'
+				elif subquery_flag:
+					cte_val = self.subqueries[node] + ' - SQ'
+				else:
+					cte_val = ''
+				print('{}\t{}'.format('({}){}'.format(cte_val, node), '{} {} {}'.format( pretext, self.symbolic_clauses[node], posttext)))
+				print('\n')
 
 	def __repr__(self) -> str:
 		"""
@@ -339,7 +367,7 @@ class SQLTree:
 		flattened = flattened.strip()
 		return flattened
 	
-	def _get_query_context(self, query_text: str, start: int, stop: int, include_body: bool = True) -> str:
+	def _get_query_context(self, query_text: str, start: int, stop: int) -> tuple[str, str]:
 		pretext = []
 		posttext = []
 		for word in query_text[:start].split()[::-1]:
@@ -351,24 +379,73 @@ class SQLTree:
 			if word in self._sqlkeywords or word[0] in self._sqlkeywords or word[-1] in self._sqlkeywords:
 				break
 			posttext.append(word)
-		if include_body:
-			retval = ' '.join(pretext[::-1]) + ' ' + query_text[start:(stop+1)] + ' ' + ' '.join(posttext)
-		else:
-			retval = ' '.join(pretext[::-1]) + ' ' + query_text[(start+1):stop] + ' ' + ' '.join(posttext)
-		return retval
+		return ' '.join(pretext[::-1]), ' '.join(posttext)
 	
 	def _init_symbolic_query(self) -> None:
-		rev_idx_intervals = {}
+		rev_idx_starts = {}
+		rev_idx_stops = set()
 		ignore_idxs = set()
-		for node, (start, stop) in self.dfs.intervals.items():
-			rev_idx_intervals[start] = '[@{}]'.format(node)
-			ignore_idxs.update(list(range(start, stop)))
+
+		# For subquery tokenization, mask BFS and create symbolic nodes
+		# to prevent inclusion of subquery context in node characterization
+		stack = deque()
+		level_op = 0
+		for node in self.dfs.bfs(descending=False):
+			# TODO: SQLNode creation
+			if node != 0:
+				start, stop = self.dfs.intervals[node]
+			else:
+				start, stop = 0, len(self.working_query)
+			node_contents = ''
+			for i in range(start, stop):
+				if i in rev_idx_starts:
+					child = rev_idx_starts[i]
+					if level_op < 0:
+						node_contents += '.'
+					elif level_op == 1 and stack:
+						node_contents += '-'
+					elif level_op > 1 and stack:
+						node_contents += '^' * level_op
+					node_contents += '[@{}]'.format(rev_idx_starts[i])
+					stack.append(child)
+					level_op = -1
+				elif i in rev_idx_stops:
+					level_op = max(1, level_op+1)
+					if stack:
+						stack.pop()  # can manipulate child nodes here if needed for SQLNode
+				elif i not in ignore_idxs:
+					node_contents += self.working_query[i]
+					level_op = 0
+			if node != 0:
+				node_contents += self.working_query[stop]
+				rev_idx_starts[start] = node
+				rev_idx_stops.add(stop)
+				ignore_idxs.update(list(range(start, stop)))
+			self.symbolic_clauses[node] = node_contents
+
+		# For query as a whole, mask DFS
+		stack = deque()
+		level_op = 0
 		for i, c in enumerate(self.working_query):
-			if i in rev_idx_intervals:
-				self.symbolic_query += rev_idx_intervals[i]
+			if i in rev_idx_starts:
+				node = rev_idx_starts[i]
+				self.symbolic_intervals[node] = [len(self.symbolic_query), None]
+				if level_op < 0:
+					self.symbolic_query += '.'
+				elif level_op == 1 and stack:
+					self.symbolic_query += '-'
+				elif level_op > 1 and stack:
+					self.symbolic_query += '^' * level_op
+				self.symbolic_query += '[@{}]'.format(rev_idx_starts[i])
+				stack.append(node)
+				level_op = -1
+			elif i in rev_idx_stops:
+				level_op = max(1, level_op+1)
+				if stack:
+					self.symbolic_intervals[stack.pop()][1] = len(self.symbolic_query)
 			elif i not in ignore_idxs:
 				self.symbolic_query += c
-		# TODO: map dfs.intervals to self.symbolic_intervals for _iscte testing
+				level_op = 0
 
 	def _iscte(self, query_text: str, node: int) -> bool:
 		"""
@@ -387,11 +464,9 @@ class SQLTree:
 			return False
 		select_idxs = [match.start() for match in 
 				 		re.finditer(r'\s?select\s', self.symbolic_query, flags=re.IGNORECASE | re.MULTILINE)]
-		print(with_end, self.dfs.intervals[node][0], self.dfs.intervals[node][1], select_idxs[0])
-		cte_scope = with_end < self.dfs.intervals[node][0] < self.dfs.intervals[node][1] < select_idxs[0]
+		cte_scope = with_end <= self.symbolic_intervals[node][0] <= self.symbolic_intervals[node][1] <= select_idxs[0]
 		return subquery and cte_scope
 
-	
 	def _prettyprint(self) -> str:
 		"""
 		Format query to be more readable using internal structure information
@@ -529,4 +604,8 @@ if __name__ == '__main__':
 		*/
 	"""
 	sqltree = SQLTree(example3_comments)
+	print(sqltree.variables)
+	print('\n')
+	print(sqltree.symbolic_query)
+	print('\n')
 	print(sqltree.working_query)
