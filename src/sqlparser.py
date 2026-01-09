@@ -1,5 +1,6 @@
 import re
 import sys
+import globals
 from collections import deque
 
 
@@ -145,6 +146,43 @@ class SQLElement:
 class SQLNode:
 	"""
 	One (sub-)query and its components.
+
+	- Main
+		- SELECT
+			- DISTINCT, TOP
+			- AS, =
+			- variables plain, "", [] AS plain, "", ''
+				- subquery +/- named
+				- Other keywords +/- ()
+		- FROM
+			- tables plain, "", [] AS plain, '', ""
+			- JOIN table plain, "", [] AS plain, '', ""; subquery AS plain, "", []
+				- OUTER, INNER, LEFT, RIGHT, FULL OUTER
+				- ON table.var plain, "", [] = table.var plain, "", []
+				- ON subquery AS plain, "", []
+		- WHERE
+			- table.var plain, "", []
+				- Operator =, <>, >, >=, <=, !=, IS NULL, IS NOT NULL, &, |, ^
+				- AND, OR, NOT, BETWEEN, IN, LIKE, EXISTS +/- NOT
+		- GROUP BY
+			- HAVING
+		- ORDER BY
+			- Variable +/- <order>, ...
+			- Order: ASC, DESC
+		- OFFSET
+			- ROWS
+		- FETCH
+			- NEXT <int> ROWS ONLY
+	- Row operations
+		- UNION +/- ALL
+		- INTERSECT
+		- EXCEPT
+	- Table modifications
+		- INSERT INTO
+		- INTO
+		- ___ TABLE
+			- CREATE, ALTER, DROP
+			- Suffix: IF/IF NOT EXISTS
 	"""
 	def __init__(self, query_text: str, row_ops: list = []) -> None:
 		self.issql = self.issql(query_text)
@@ -197,55 +235,8 @@ class SQLTree:
 		self._ignore_idxs = set()
 		self._pprint = pprint
 		self._outer_statements = []
-		self._typemap = {
-			'NVARCHAR': 'TEXT',
-			'VARCHAR': 'TEXT',
-			'NCHAR': 'TEXT',
-			'CHAR': 'TEXT',
-			'BINARY': 'TEXT',
-			'VARBINARY': 'TEXT',
-			'TEXT': 'TEXT',
-			'TINYTEXT': 'TEXT',
-			'MEDIUMTEXT': 'TEXT',
-			'LONGTEXT': 'TEXT',
-			'TINYBLOB': 'BLOB',
-			'MEDIUMBLOB': 'BLOB',
-			'LONGBLOB': 'BLOB',
-			'BIT': 'INTEGER',
-			'TINYINT': 'INTEGER',
-			'BOOL': 'INTEGER',
-			'SMALLINT': 'INTEGER',
-			'MEDIUMINT': 'INTEGER',
-			'INT': 'INTEGER',
-			'INTEGER': 'INTEGER',
-			'BIGINT': 'INTEGER',
-			'SMALLMONEY': 'REAL',
-			'MONEY': 'REAL',
-			'FLOAT': 'REAL',
-			'DOUBLE': 'REAL',
-			'DECIMAL': 'REAL',
-			'DEC': 'REAL',
-			'REAL': 'REAL',
-			'DATE': 'TEXT',
-			'DATETIME': 'TEXT',
-			'DATETIME2': 'TEXT',
-			'SMALLDATETIME': 'TEXT',
-			'DATETIMEOFFSET': 'TEXT',
-			'TIMESTAMP': 'TEXT',
-			'TIME': 'TEXT',
-			'YEAR': 'TEXT'
-		}
-		self._sqlkeywords = set((
-			'SELECT', 'FROM', 'WHERE',
-			'INSERT', 'INTO', 'UPDATE', 'DELETE',
-			'CREATE', 'ALTER', 'DROP', 'JOIN', 
-			'GROUP BY', 'ORDER BY', 'HAVING', 'DISTINCT',
-			'WITH', 'DECLARE', 'SET', ';',
-			'BEGIN', 'END', ',', ')', '(',
-			'UNION', 'INTERSECT', 'EXCEPT', 'OUTER',
-			'INNER', 'FULL', 'OVER', 'LEFT',
-			'RIGHT'
-		))
+		self._typemap = globals.TYPEMAP
+		self._sqlkeywords = globals.ODBC_KEYWORDS
 		self.variables = {}
 		self.tree = {}
 		self.root = SQLNode
@@ -372,12 +363,13 @@ class SQLTree:
 		posttext = []
 		for word in query_text[:start].split()[::-1]:
 			if word in self._sqlkeywords or word[0] in self._sqlkeywords or word[-1] in self._sqlkeywords:
-				break
+				if word != 'AS':
+					break
 			pretext.append(word)
 		for word in query_text[(stop+1):].split():
-			
 			if word in self._sqlkeywords or word[0] in self._sqlkeywords or word[-1] in self._sqlkeywords:
-				break
+				if word != 'AS':
+					break
 			posttext.append(word)
 		return ' '.join(pretext[::-1]), ' '.join(posttext)
 	
