@@ -184,16 +184,52 @@ class SQLNode:
 			- CREATE, ALTER, DROP
 			- Suffix: IF/IF NOT EXISTS
 	"""
-	def __init__(self, query_text: str, row_ops: list = []) -> None:
+	def __init__(self, query_text: str) -> None:
+		
 		self.issql = self.issql(query_text)
-		self.internal_degree = len(row_ops)
-		self.row_ops = row_ops
+		self.row_ops = [(m.group(1), m.start(), m.end()) for m in globals.TSQL_ROWOPS.finditer(query_text)]
+		self.query_text = []
+		if self.row_ops:
+			self.query_text.append(query_text[:self.row_ops[0][1]])
+			for i in range(len(self.row_ops)):
+				try:
+					self.query_text.append(query_text[self.row_ops[i][2]:self.row_ops[i+1][1]])
+				except IndexError:
+					self.query_text.append(query_text[self.row_ops[i][2]:])
+		else:
+			self.query_text.append(query_text)
+
+		statement_boundaries = [{m.group(1).upper(): (m.start(), m.end()) 
+						   			for m in globals.TSQL_STATEMENTS.finditer(q)} 
+								for q in self.query_text]
+		print('\n')
+		print(self.query_text)
+		print(statement_boundaries)
+
+		self.internal_degree = len(self.row_ops)
 		self.select = [SQLElement()] * self.internal_degree
 		self.from_ = [SQLElement()] * self.internal_degree
 		self.join = [SQLElement()] * self.internal_degree
 		self.where = [SQLElement()] * self.internal_degree
 		self.groupby = [SQLElement()] * self.internal_degree
 		self.orderby = [SQLElement()] * self.internal_degree
+	
+	def _parse_tables_vars(self, statement_text:str) -> tuple[tuple[str]]:
+		"""
+		Return: ((table_name, var_name, alias),)
+		With None for each element if element missing.
+		TODO: could move this to SQLElement constructor
+		"""
+		# 1. table.var AS alias
+
+
+		# 2. table.var
+
+
+		# 3. var AS alias
+
+
+		# 4. var
 	
 	@staticmethod
 	def issql(query_text: str) -> bool:
@@ -601,3 +637,5 @@ if __name__ == '__main__':
 	print(sqltree.symbolic_query)
 	print('\n')
 	print(sqltree.working_query)
+
+	SQLNode(sqltree.symbolic_query)
