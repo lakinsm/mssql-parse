@@ -220,8 +220,12 @@ class SQLNode:
 		With None for each element if element missing.
 		TODO: could move this to SQLElement constructor
 		"""
+		consumed = set()
 		# 1. table.var AS alias
-
+		for m in globals.TSQL_VARTABLE_NAMED.finditer(statement_text):
+			start = m.start()
+			stop = m.end()
+			
 
 		# 2. table.var
 
