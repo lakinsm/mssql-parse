@@ -11,22 +11,46 @@ def isnamed(query_text: str) -> tuple[bool, list]:
 	Returns: (bool, [str(element_name),]) if prefix/suffix
 				(bool, [(str(col_nam), str(alias_name),]) if object
 	"""
-	# Check prefix
-	prefix = re.search(r'[ \t]*[\"\[]?([^\s()\"\\[\]\']+)[\"\]]?[ \t\r\n]+AS[ \t\r\n]*\(', query_text, flags=re.IGNORECASE | re.MULTILINE)
-	suffix = re.search(r'\)[ \t\r\n]*AS[ \t\r\n]+[\"\[]?([^\s()\"\'\]\[]+)[\"\]]?[ \t\r\n]*', query_text, flags=re.IGNORECASE | re.MULTILINE)
-	object = re.finditer(r'[ \t]*[\"\[]?([^\s()\"\'\[\]]+)[\"\]]?[ \t\r\n]+AS[ \t\r\n]+[\"\']?([^\s()\"\']+)[\"\']?[ \t]*,?[ \t\r\n]*', query_text, flags=re.IGNORECASE | re.MULTILINE)
+	# Check prefix/suffix for subqueries/CTEs
+	prefix = globals.TSQL_SUBQUERY_ALIAS_PREFIX.search(query_text)
+	suffix = globals.TSQL_SUBQUERY_ALIAS_SUFFIX.search(query_text)
+
+	# Check for tables/vars with aliases
+	object_matches = []
+	consumed = set()
+	# 1. table.var AS? alias
+	for m in globals.TSQL_VARTABLE_NAMED.finditer(query_text):
+		start = m.start()
+		stop = start + len(m.groups()[0])
+		match_interval = set(range(start, stop))
+		if not consumed.intersection(match_interval):
+			table, varname, alias = m.group('table', 'varname', 'alias')
+			if alias not in globals.ODBC_KEYWORDS:
+				object_matches.append(('{}.{}'.format(table, varname), alias),)
+		consumed.update(match_interval)
+
+	# 2. var AS? alias
+	for m in globals.TSQL_VAR_NAMED.finditer(query_text):
+		start = m.start()
+		stop = start + len(m.groups()[0])
+		match_interval = set(range(start, stop))
+		if not consumed.intersection(match_interval):
+			varname, alias = m.group('varname', 'alias')
+			if alias not in globals.ODBC_KEYWORDS:
+				object_matches.append((varname, alias),)
+		consumed.update(match_interval)
 
 	query_val = [bool(x) for x in [prefix, suffix]]
 	true_count = query_val.count(True)
 	assert(true_count <= 1)
 	if true_count:
 		query_name = [prefix, suffix][query_val.index(True)]
-	ret_bool = True if any([prefix, suffix, object]) else False
+	ret_bool = True if any([prefix, suffix, object_matches]) else False
 	if ret_bool:
 		if any(query_val):
 			ret_val = [query_name.group(1)]
 		else:
-			ret_val = [(match.group(1), match.group(2)) for match in object]
+			ret_val = object_matches
 	else:
 		ret_val = []
 	return ret_bool, ret_val
@@ -138,7 +162,7 @@ class SQLElement:
 	One clause of SQL (sub-)query.
 	"""
 	def __init__(self, keyword, start, stop, text):
-		self._unclaimed_vars = set()
+		self._unclaimedvars = set()
 		self.text = text
 		self.start = start
 		self.stop = stop
@@ -149,13 +173,51 @@ class SQLElement:
 		# TODO: WITH, FROM, WHERE, OFFSET, FETCH
 		if keyword in ('PRETEXT', 'SELECT', 'GROUP BY', 'ORDER BY'):
 			self._parse_tables_vars(text)
+		elif keyword == 'WITH':
+			self._parse_ctes(text)
+		elif keyword == 'FROM':
+			self._parse_joins(text)
+		elif keyword == 'WHERE':
+			x = 1
+		elif keyword == 'OFFSET':
+			x = 1
+		elif keyword == 'FETCH':
+			x = 1
+		else:
+			sys.stderr.write('ERROR: keyword not in expected keywords, provided: {}\n'.format(
+				keyword
+			))
+			raise(ValueError)
+		
+		print('TABLESVARS: ', self.tablesvars)
+		print('ALIASES: ', self.aliases)
+		print('UNCLAIMEDVARS: ', self._unclaimedvars)
+	
+	def _parse_joins(self, sql_text: str) -> None:
+		"""
+		Store table joins and relations.
+		"""
+		# Find keyword boundaries and parse each clause
+		consumed = set()
 
-	def _parse_tables_vars(self, sql_text:str) -> tuple[tuple[str]]:
+
+		# TODO: remember USING
+
+	
+	def _parse_ctes(self, sql_text: str) -> None:
 		"""
-		Return: ((table_name, var_name, alias),)
-		With None for each element if element missing.
+		Store CTE alias and subquery relations.
 		"""
-		unclaimed_fields = set()
+		for m in globals.TSQL_CTES.finditer(sql_text):
+			table, alias = m.group('table', 'alias')  # table will be a symbolic here
+			self.tablesvars.setdefault(table, set())
+			self.aliases[alias] = (None, table)  # table alias, no var
+
+	def _parse_tables_vars(self, sql_text:str) -> None:
+		"""
+		Store table, var, and alias info into self.tablesvars and self.aliases 
+		with None if element missing.
+		"""
 		consumed = set()
 		# 1. table.var AS alias
 		for m in globals.TSQL_VARTABLE_NAMED.finditer(sql_text):
@@ -186,9 +248,9 @@ class SQLElement:
 			match_interval = set(range(start, stop))
 			if not consumed.intersection(match_interval):
 				varname, alias = m.group('varname', 'alias')
-				self._unclaimed_vars.add(varname)
+				self._unclaimedvars.add(varname)
 				if alias not in globals.ODBC_KEYWORDS:
-					self.aliases[alias] = (varname, None)  # table will be resolved later
+					self.aliases[alias] = (varname, None)  # table will be resolved in SQLNode
 			consumed.update(match_interval)
 
 		# 4. var
@@ -198,12 +260,8 @@ class SQLElement:
 			match_interval = set(range(start, stop))
 			if not consumed.intersection(match_interval):
 				varname, alias = m.group('varname')
-				self._unclaimed_vars.add(varname)
+				self._unclaimedvars.add(varname)
 			consumed.update(match_interval)
-
-		print(self.tablesvars)
-		print(self.aliases)
-		print(self._unclaimed_vars)
 
 
 class SQLNode:
@@ -653,21 +711,34 @@ if __name__ == '__main__':
 		),
 		cte4 AS
 		(
-			SELECT *
+			SELECT *,
+			(SELECT TOP 1 keyvar FROM subtable1 WHERE keyvar = 'keyvalue') "aliassqval"
 			FROM blankettable globalias
+		),
+		cte6 AS
+		(
+			SELECT
+				othertable4.key1,
+				othertable4.key2
+			FROM othertable4
+			WHERE 
+				key3 <> 'implied column value'
+				AND othertable4.key4 >= 1
 		),
 		cte5 AS
 		(
 			SELECT
-				unnamedvar1,
-				unnamedvar2 as uvar2
+				unnamedvar1 AS key1,
+				unnamedvar2 as key2
 			FROM relativetable reltable
+			JOIN cte6
+				USING (key1, [key2])
 			WHERE unnamedvar1 = 'othervalue1'
 		)
 		SELECT 
 			mytable1.*,
 			mytable2.foo1,
-			mytable2.bar1,
+			mytable2.bar1 b1,
 			mytable3.foo1 AS "t3foo1",
 			mytable4.bar2,  -- Example comment
 			mytable5.*
@@ -689,14 +760,14 @@ if __name__ == '__main__':
 
 		SELECT
 			mytable3.*,
-			mytable4.*
+			mt4.*
 		FROM mytable3
-		JOIN mytable4
-			ON mytable3.key3 = mytable4.key1
+		JOIN mytable4 mt4
+			ON mytable3.key3 = mt4.key1
 		JOIN (  -- Subquery calculates group sum from most recent date
 			SELECT groupid1, MAX(field1), SUM(field2) FROM mytable6 WHERE foobar = 'example2' 
 			GROUP BY groupid1
-		) AS "groupsum"
+		) "groupsum"
 		JOIN cte3
 			ON mytable3.key1 = cte3.key1
 		JOIN cte2
@@ -704,7 +775,7 @@ if __name__ == '__main__':
 		FULL JOIN cte4
 			ON mytable4.key1 = cte4.key1
 		LEFT JOIN cte5
-			ON mytable4.key2 = cte5.uvar2
+			ON mytable4.key2 = cte5.key2
 			AND cte5.unnamedvar1 = "filtervalue"
 		WHERE mytable3.field5 = "bar4"
 		ORDER BY mytable1.key1 DESC  -- Order by request of end users

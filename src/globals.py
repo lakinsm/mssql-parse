@@ -6,6 +6,13 @@ TSQL_VARTABLE_NAMED = re.compile(r'(?=([\"\[]?(?P<table>[<>@A-Za-z0-9_]+)[\"\]]?
 TSQL_VARTABLE_UNNAMED = re.compile(r'(?=([\"\[]?(?P<table>[<>@A-Za-z0-9_]+)[\"\]]?\.[\"\[]?(?P<varname>[<>@A-Za-z0-9_]+|[\*])[\"\]]?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_VAR_NAMED = re.compile(r'(?=([^\.][\"\[]?(?P<varname>[<>@A-Za-z0-9_]+|[\*])[\"\]]?(\s+AS\s+|\s)[\"\']?(?P<alias>[<>@A-Za-z0-9_]+)[\"\']?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_VAR_UNNAMED = re.compile(r'(?=([^\.][\"\[]?(?P<varname>[<>@A-Za-z0-9_]+|[\*])[\"\]]?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_SUBQUERY_ALIAS_PREFIX = re.compile(r'[\"\[]?(?P<alias>[A-Za-z0-9_]+)[\"\]]?\s+AS\s+\(', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_SUBQUERY_ALIAS_SUFFIX = re.compile(r'\)(\s+AS\s+|\s+)[\"\']?(?P<alias>[A-Za-z0-9_]+)[\"\']?\s*(,|$)', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_CTES = re.compile(r'\s*(?P<alias>[A-Za-z0-9_]+)\s+AS\s+(?P<table>[<>@A-Za-z0-9_]+)(\s|,|\.|$)', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_JOINS = re.compile(r'\s*(?P<jointype>(FULL OUTER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|CROSS JOIN|SELF JOIN|JOIN))\s+', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_JOINCONDITIONS = re.compile(r'', flags=re.IGNORECASE | re.MULTILINE)
+
+# TSQL_ = re.compile(r'', flags=re.IGNORECASE | re.MULTILINE)
 
 ODBC_KEYWORDS = {
 	'ABSOLUTE',
