@@ -2,10 +2,10 @@ import re
 
 TSQL_STATEMENTS = re.compile(r'\s*(WITH|SELECT|FROM|WHERE|GROUP BY|ORDER BY|OFFSET|FETCH)\s*', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_ROWOPS = re.compile(r'\s*(INTERSECT|EXCEPT|UNION ALL|UNION)\s*', flags=re.IGNORECASE | re.MULTILINE)
-TSQL_VARTABLE_NAMED = re.compile(r'(?=([\"\[]?([A-Za-z0-9_]+)[\"\]]?\.[\"\[]?([A-Za-z0-9_]+|[\*])[\"\]]?(\s+AS\s+|\s)[\"\']?([A-Za-z0-9_]+)[\"\']?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
-TSQL_VARTABLE_UNNAMED = re.compile(r'(?=([\"\[]?([A-Za-z0-9_]+)[\"\]]?\.[\"\[]?([A-Za-z0-9_]+|[\*])[\"\]]?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
-TSQL_VAR_NAMED = re.compile(r'(?=([^\.][\"\[]?([A-Za-z0-9_]+|[\*])[\"\]]?(\s+AS\s+|\s)[\"\']?([A-Za-z0-9_]+)[\"\']?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
-TSQL_VAR_UNNAMED = re.compile(r'(?=([^\.][\"\[]?([A-Za-z0-9_]+|[\*])[\"\]]?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_VARTABLE_NAMED = re.compile(r'(?=([\"\[]?(?P<table>[<>@A-Za-z0-9_]+)[\"\]]?\.[\"\[]?(?P<varname>[<>@A-Za-z0-9_]+|[\*])[\"\]]?(\s+AS\s+|\s)[\"\']?(?P<alias>[<>@A-Za-z0-9_]+)[\"\']?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_VARTABLE_UNNAMED = re.compile(r'(?=([\"\[]?(?P<table>[<>@A-Za-z0-9_]+)[\"\]]?\.[\"\[]?(?P<varname>[<>@A-Za-z0-9_]+|[\*])[\"\]]?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_VAR_NAMED = re.compile(r'(?=([^\.][\"\[]?(?P<varname>[<>@A-Za-z0-9_]+|[\*])[\"\]]?(\s+AS\s+|\s)[\"\']?(?P<alias>[<>@A-Za-z0-9_]+)[\"\']?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_VAR_UNNAMED = re.compile(r'(?=([^\.][\"\[]?(?P<varname>[<>@A-Za-z0-9_]+|[\*])[\"\]]?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
 
 ODBC_KEYWORDS = {
 	'ABSOLUTE',

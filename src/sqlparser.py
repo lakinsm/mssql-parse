@@ -137,10 +137,73 @@ class SQLElement:
 	"""
 	One clause of SQL (sub-)query.
 	"""
-	def __init__(self):
-		self.text = ''
-		self.fields = []
-		self.tables = []
+	def __init__(self, keyword, start, stop, text):
+		self._unclaimed_vars = set()
+		self.text = text
+		self.start = start
+		self.stop = stop
+		self.tablesvars = {}
+		self.aliases = {}
+
+		print('\n{}'.format(text))
+		# TODO: WITH, FROM, WHERE, OFFSET, FETCH
+		if keyword in ('PRETEXT', 'SELECT', 'GROUP BY', 'ORDER BY'):
+			self._parse_tables_vars(text)
+
+	def _parse_tables_vars(self, sql_text:str) -> tuple[tuple[str]]:
+		"""
+		Return: ((table_name, var_name, alias),)
+		With None for each element if element missing.
+		"""
+		unclaimed_fields = set()
+		consumed = set()
+		# 1. table.var AS alias
+		for m in globals.TSQL_VARTABLE_NAMED.finditer(sql_text):
+			start = m.start()
+			stop = start + len(m.groups()[0])
+			match_interval = set(range(start, stop))
+			if not consumed.intersection(match_interval):
+				table, varname, alias = m.group('table', 'varname', 'alias')
+				self.tablesvars.setdefault(table, set()).add(varname)
+				if alias not in globals.ODBC_KEYWORDS:
+					self.aliases[alias] = (varname, table)
+			consumed.update(match_interval)
+
+		# 2. table.var
+		for m in globals.TSQL_VARTABLE_UNNAMED.finditer(sql_text):
+			start = m.start()
+			stop = start + len(m.groups()[0])
+			match_interval = set(range(start, stop))
+			if not consumed.intersection(match_interval):
+				table, varname = m.group('table', 'varname')
+				self.tablesvars.setdefault(table, set()).add(varname)
+			consumed.update(match_interval)
+
+		# 3. var AS alias
+		for m in globals.TSQL_VAR_NAMED.finditer(sql_text):
+			start = m.start()
+			stop = start + len(m.groups()[0])
+			match_interval = set(range(start, stop))
+			if not consumed.intersection(match_interval):
+				varname, alias = m.group('varname', 'alias')
+				self._unclaimed_vars.add(varname)
+				if alias not in globals.ODBC_KEYWORDS:
+					self.aliases[alias] = (varname, None)  # table will be resolved later
+			consumed.update(match_interval)
+
+		# 4. var
+		for m in globals.TSQL_VAR_UNNAMED.finditer(sql_text):
+			start = m.start()
+			stop = start + len(m.groups()[0])
+			match_interval = set(range(start, stop))
+			if not consumed.intersection(match_interval):
+				varname, alias = m.group('varname')
+				self._unclaimed_vars.add(varname)
+			consumed.update(match_interval)
+
+		print(self.tablesvars)
+		print(self.aliases)
+		print(self._unclaimed_vars)
 
 
 class SQLNode:
@@ -185,9 +248,9 @@ class SQLNode:
 			- Suffix: IF/IF NOT EXISTS
 	"""
 	def __init__(self, query_text: str) -> None:
-		
 		self.issql = self.issql(query_text)
 		self.row_ops = [(m.group(1), m.start(), m.end()) for m in globals.TSQL_ROWOPS.finditer(query_text)]
+		self.internal_degree = len(self.row_ops) + 1
 		self.query_text = []
 		if self.row_ops:
 			self.query_text.append(query_text[:self.row_ops[0][1]])
@@ -198,42 +261,42 @@ class SQLNode:
 					self.query_text.append(query_text[self.row_ops[i][2]:])
 		else:
 			self.query_text.append(query_text)
-
-		statement_boundaries = [{m.group(1).upper(): (m.start(), m.end()) 
-						   			for m in globals.TSQL_STATEMENTS.finditer(q)} 
-								for q in self.query_text]
-		print('\n')
-		print(self.query_text)
-		print(statement_boundaries)
-
-		self.internal_degree = len(self.row_ops)
-		self.select = [SQLElement()] * self.internal_degree
-		self.from_ = [SQLElement()] * self.internal_degree
-		self.join = [SQLElement()] * self.internal_degree
-		self.where = [SQLElement()] * self.internal_degree
-		self.groupby = [SQLElement()] * self.internal_degree
-		self.orderby = [SQLElement()] * self.internal_degree
-	
-	def _parse_tables_vars(self, statement_text:str) -> tuple[tuple[str]]:
-		"""
-		Return: ((table_name, var_name, alias),)
-		With None for each element if element missing.
-		TODO: could move this to SQLElement constructor
-		"""
-		consumed = set()
-		# 1. table.var AS alias
-		for m in globals.TSQL_VARTABLE_NAMED.finditer(statement_text):
-			start = m.start()
-			stop = m.end()
-			
-
-		# 2. table.var
-
-
-		# 3. var AS alias
-
-
-		# 4. var
+		
+		statement_boundaries = []
+		for r in range(self.internal_degree):
+			statement_boundaries.append({})
+			keyword_breaks = [(m.start(), m.group(1).upper()) 
+								for m in globals.TSQL_STATEMENTS.finditer(self.query_text[r])]
+			for i in range(len(keyword_breaks)):
+				start, keyword = keyword_breaks[i]
+				if i == 0:
+					pretext = self.query_text[r][:start]
+					if pretext.strip():
+						statement_boundaries[r].setdefault('PRETEXT', []).append((0, start),)
+				if (i+1) == len(keyword_breaks):
+					statement_boundaries[r].setdefault(keyword, []).append((start, len(self.query_text[r])),)
+				else:
+					next_start = keyword_breaks[i+1][0]
+					statement_boundaries[r].setdefault(keyword, []).append((start, next_start),)
+		
+		self.clause = [{
+			'PRETEXT': None,
+			'WITH': None,
+			'SELECT': None,
+			'FROM': None,
+			'WHERE': None,
+			'GROUP BY': None,
+			'ORDER BY': None,
+			'OFFSET': None,
+			'FETCH': None
+		} for _ in  range(self.internal_degree)]
+		for r in range(self.internal_degree):
+			for keyword, breaks in statement_boundaries[r].items():
+				for start, stop in breaks:
+					self.clause[r][keyword] = SQLElement(keyword, start, stop, self.query_text[r][start:stop])
+		print(self.clause)
+		# TODO: resolve unclaimed vars within elements
+		# TODO: validate selects & by clauses with tables in from/joins
 	
 	@staticmethod
 	def issql(query_text: str) -> bool:
@@ -358,8 +421,8 @@ class SQLTree:
 					cte_val = self.subqueries[node] + ' - SQ'
 				else:
 					cte_val = ''
-				print('{}\t{}'.format('({}){}'.format(cte_val, node), '{} {} {}'.format( pretext, self.symbolic_clauses[node], posttext)))
-				print('\n')
+				# print('{}\t{}'.format('({}){}'.format(cte_val, node), '{} {} {}'.format( pretext, self.symbolic_clauses[node], posttext)))
+				# print('\n')
 
 	def __repr__(self) -> str:
 		"""
@@ -438,7 +501,7 @@ class SQLTree:
 						node_contents += '-'
 					elif level_op > 1 and stack:
 						node_contents += '^' * level_op
-					node_contents += '[@{}]'.format(rev_idx_starts[i])
+					node_contents += '<@{}>'.format(rev_idx_starts[i])
 					stack.append(child)
 					level_op = -1
 				elif i in rev_idx_stops:
@@ -468,7 +531,7 @@ class SQLTree:
 					self.symbolic_query += '-'
 				elif level_op > 1 and stack:
 					self.symbolic_query += '^' * level_op
-				self.symbolic_query += '[@{}]'.format(rev_idx_starts[i])
+				self.symbolic_query += '<@{}>'.format(rev_idx_starts[i])
 				stack.append(node)
 				level_op = -1
 			elif i in rev_idx_stops:
@@ -531,19 +594,19 @@ if __name__ == '__main__':
 	opens = [match.start() for match in re.finditer(re.escape('('), example1_nested)]
 	closes = [match.start() for match in re.finditer(re.escape(')'), example1_nested)]
 	dfs = DFS(opens, closes)
-	print(example1_nested)
-	print('Traversal: {}'.format(dfs.traversal))
-	print('Tree: {}'.format(dfs.tree))
-	print('Levels: {}'.format(dfs.levels))
-	print('Intervals: {}\n'.format(dfs.intervals))
+	# print(example1_nested)
+	# print('Traversal: {}'.format(dfs.traversal))
+	# print('Tree: {}'.format(dfs.tree))
+	# print('Levels: {}'.format(dfs.levels))
+	# print('Intervals: {}\n'.format(dfs.intervals))
 
 	example2_nested = '1(3(5(7)9(12)15(18)21(24(27(30)33)36)39)42)45(48(51)54)57(60)63(66(69)72)")"\')\' SELECT'
 	sqltree = SQLTree(example2_nested)
-	print(example2_nested)
-	print('Traversal: {}'.format(sqltree.dfs.traversal))
-	print('Tree: {}'.format(sqltree.dfs.tree))
-	print('Levels: {}'.format(sqltree.dfs.levels))
-	print('Intervals: {}\n'.format(sqltree.dfs.intervals))
+	# print(example2_nested)
+	# print('Traversal: {}'.format(sqltree.dfs.traversal))
+	# print('Tree: {}'.format(sqltree.dfs.tree))
+	# print('Levels: {}'.format(sqltree.dfs.levels))
+	# print('Intervals: {}\n'.format(sqltree.dfs.intervals))
 	assert(dfs.traversal == sqltree.dfs.traversal)
 	assert(dfs.tree == sqltree.dfs.tree)
 	assert(dfs.levels == sqltree.dfs.levels)
@@ -587,6 +650,19 @@ if __name__ == '__main__':
 			WHERE othertable4.field1 = 'value1'
 			GROUP BY
 				othertable4.count
+		),
+		cte4 AS
+		(
+			SELECT *
+			FROM blankettable globalias
+		),
+		cte5 AS
+		(
+			SELECT
+				unnamedvar1,
+				unnamedvar2 as uvar2
+			FROM relativetable reltable
+			WHERE unnamedvar1 = 'othervalue1'
 		)
 		SELECT 
 			mytable1.*,
@@ -625,6 +701,11 @@ if __name__ == '__main__':
 			ON mytable3.key1 = cte3.key1
 		JOIN cte2
 			ON mytable4.key1 = cte2.myvar1
+		FULL JOIN cte4
+			ON mytable4.key1 = cte4.key1
+		LEFT JOIN cte5
+			ON mytable4.key2 = cte5.uvar2
+			AND cte5.unnamedvar1 = "filtervalue"
 		WHERE mytable3.field5 = "bar4"
 		ORDER BY mytable1.key1 DESC  -- Order by request of end users
 		
@@ -636,10 +717,10 @@ if __name__ == '__main__':
 		*/
 	"""
 	sqltree = SQLTree(example3_comments)
-	print(sqltree.variables)
-	print('\n')
-	print(sqltree.symbolic_query)
-	print('\n')
-	print(sqltree.working_query)
+	# print(sqltree.variables)
+	# print('\n')
+	# print(sqltree.symbolic_query)
+	# print('\n')
+	# print(sqltree.working_query)
 
 	SQLNode(sqltree.symbolic_query)
