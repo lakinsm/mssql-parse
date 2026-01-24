@@ -68,25 +68,9 @@ def issubquery(query_text: str, require_name: bool = False) -> bool:
 		- Subqueries can:
 			3. Be named
 	"""
-	select = False
-	parentheses = False
-	name = False
-	try:
-		opening = query_text.index('(')
-	except ValueError:
-		return parentheses
-	try:
-		closing = query_text.rfind(')')
-	except ValueError:
-		return parentheses
-	parentheses = opening < closing
-	try:
-		select_idx = re.search(r'select', query_text, flags=re.IGNORECASE).start()
-	except AttributeError:
-		return select
-	select = opening < select_idx < closing
+	query_flag = globals.IS_SQL_QUERY.search(query_text) is not None
 	name = isnamed(query_text)[0] if require_name else True
-	return select and parentheses and name
+	return query_flag and name
 
 
 class DFS:
@@ -161,13 +145,14 @@ class SQLElement:
 	"""
 	One clause of SQL (sub-)query.
 	"""
-	def __init__(self, keyword, start, stop, text):
+	def __init__(self, keyword: str, start: int, stop: int, text: str, non_subqueries: dict):
 		self._unclaimedvars = set()
 		self.text = text
 		self.start = start
 		self.stop = stop
 		self.tablesvars = {}
 		self.aliases = {}
+		self.non_subqueries = non_subqueries
 
 		print('\n{}'.format(text))
 		# TODO: WITH, FROM, WHERE, OFFSET, FETCH
@@ -198,11 +183,69 @@ class SQLElement:
 		Store table joins and relations.
 		"""
 		# Find keyword boundaries and parse each clause
+		join_boundaries = []
+		join_clauses = []
 		consumed = set()
+		for m in globals.TSQL_JOINS.finditer(sql_text):
+			start = m.start()
+			stop = start + len(m.group()[0])
+			match_interval = set(range(start, stop))
+			if not consumed.intersection(match_interval):
+				jointype = m.group('jointype')
+				join_boundaries.append((start, jointype),)
+			consumed.update(match_interval)
+		for i in range(len(join_boundaries)):
+			start, jointype = join_boundaries[i]
+			if i == 0:
+				pretext = sql_text[:start]
+				if pretext.strip():
+					join_clauses.append((0, start, 'FROM'))
+			if (i+1) == len(join_boundaries):
+				join_clauses.append((start, len(sql_text), jointype),)
+			else:
+				next_start = join_boundaries[i+1][0]
+				join_clauses.append((start, next_start, jointype),)		
 
+		# Within each clause, expand non-node symbolics
+		expanded_clauses = []
+		for start, stop, jointype in join_clauses:
+			clause_text = sql_text[start:stop]
+			expanded = set()
+			child_q = deque([clause_text])
+			output_q = deque()
+			while child_q:
+				self._expand_clause(child_q.popleft(), output_q, expanded)
+			expanded_clauses.append(''.join(output_q))
+		for ec in expanded_clauses:
+			print(ec)
+		sys.exit()
 
-		# TODO: remember USING
+		# TODO: table relation finding -> remember USING
 
+	def _expand_clause(self, substring: str, q: deque, seen: set) -> None:
+		"""
+		Add characters to output queue DFS order
+		"""
+		symbolic_starts = {}
+		symbolic_idxs = set()
+		for m in globals.MSSQL_SYMBOLIC.finditer(substring):
+			symbolic_starts[m.start()] = int(m.group(2))
+			start = m.start()
+			stop = m.start() + len(m.groups()[0])
+			if substring[stop] == '.':
+				q.append(' ')
+				stop += 1
+			symbolic_idxs.update(range(start+1, stop))
+		for i in range(len(substring)):
+			if i in symbolic_idxs:
+				continue
+			elif i in symbolic_starts:
+				symb = symbolic_starts[i]
+				if symb in self.non_subqueries and symb not in seen:
+					seen.add(symb)
+					self._expand_clause(self.non_subqueries[symb], q, seen)
+			else:
+				q.append(substring[i])
 	
 	def _parse_ctes(self, sql_text: str) -> None:
 		"""
@@ -305,11 +348,12 @@ class SQLNode:
 			- CREATE, ALTER, DROP
 			- Suffix: IF/IF NOT EXISTS
 	"""
-	def __init__(self, query_text: str) -> None:
+	def __init__(self, query_text: str, non_subqueries: dict) -> None:
 		self.issql = self.issql(query_text)
 		self.row_ops = [(m.group(1), m.start(), m.end()) for m in globals.TSQL_ROWOPS.finditer(query_text)]
 		self.internal_degree = len(self.row_ops) + 1
 		self.query_text = []
+		self.non_subqueries = non_subqueries
 		if self.row_ops:
 			self.query_text.append(query_text[:self.row_ops[0][1]])
 			for i in range(len(self.row_ops)):
@@ -351,7 +395,13 @@ class SQLNode:
 		for r in range(self.internal_degree):
 			for keyword, breaks in statement_boundaries[r].items():
 				for start, stop in breaks:
-					self.clause[r][keyword] = SQLElement(keyword, start, stop, self.query_text[r][start:stop])
+					self.clause[r][keyword] = SQLElement(
+						keyword,
+						start,
+						stop,
+						self.query_text[r][start:stop],
+						self.non_subqueries
+					)
 		print(self.clause)
 		# TODO: resolve unclaimed vars within elements
 		# TODO: validate selects & by clauses with tables in from/joins
@@ -409,6 +459,7 @@ class SQLTree:
 		self.working_query = full_query_text
 		self.ctes = {}
 		self.subqueries = {}
+		self.non_subqueries = {}  # parenthetical clauses that are not queries
 		if not full_query_text:
 			sys.stderr.write('ERROR: query text passed to SQLTree must not be empty\n')
 			raise ValueError
@@ -457,13 +508,13 @@ class SQLTree:
 			if node != 0:
 				start, stop = self.dfs.intervals[node]
 				pretext, posttext = self._get_query_context(self.working_query, start, stop)
-				with_context = '{} {} {}'.format( pretext, self.symbolic_clauses[node], posttext)
+				with_context = '{} {} {}'.format(pretext, self.symbolic_clauses[node], posttext)
 				cte_flag = self._iscte(
 					 # symbolic_clause to avoid detecting nested selects
 					with_context, 
 					node
 				)
-				subquery_flag = issubquery(self.symbolic_clauses[node], require_name=True)
+				subquery_flag = issubquery(self.symbolic_clauses[node], require_name=False)
 
 				if cte_flag:
 					self.ctes[node] = isnamed(with_context)[1][0]
@@ -473,6 +524,8 @@ class SQLTree:
 						self.subqueries[node] = subquery_name[1][0]
 					else:
 						self.subqueries[node] = None  # subqueries can be inline and not named
+				else:
+					self.non_subqueries[node] = self.symbolic_clauses[node]
 				if cte_flag:
 					cte_val = self.ctes[node] + ' - CTE'
 				elif subquery_flag:
@@ -751,8 +804,16 @@ if __name__ == '__main__':
 			ON mytable2.key2 = mytable3.key1
 		LEFT JOIN mytable4
 			ON mytable3.key3 = mytable4.key1
-			AND mytable2.key1 = mytable4.key2
-			AND mytable1.key2 = mytable4.key3
+			AND 
+			( 
+				mytable2.key1 = mytable4.key2
+				OR mytable1.key2 = mytable4.key3
+				AND
+				(
+					mytable1.key2 <> mytable4.key2
+				)
+			)
+			AND mytable1.key1 NOT IN mytable4.key2
 		RIGHT JOIN mytable5
 			ON mytable1.key1 = mytable5.key1
 		
@@ -794,4 +855,5 @@ if __name__ == '__main__':
 	# print('\n')
 	# print(sqltree.working_query)
 
-	SQLNode(sqltree.symbolic_query)
+	print(sqltree.symbolic_query)
+	SQLNode(sqltree.symbolic_query, sqltree.non_subqueries)

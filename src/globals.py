@@ -1,5 +1,7 @@
 import re
 
+MSSQL_SYMBOLIC = re.compile(r'(?P<symb><@([0-9]+)>)', flags=re.MULTILINE)
+IS_SQL_QUERY = re.compile(r'\(.*(?=(SELECT)).*\)', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_STATEMENTS = re.compile(r'\s*(WITH|SELECT|FROM|WHERE|GROUP BY|ORDER BY|OFFSET|FETCH)\s*', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_ROWOPS = re.compile(r'\s*(INTERSECT|EXCEPT|UNION ALL|UNION)\s*', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_VARTABLE_NAMED = re.compile(r'(?=([\"\[]?(?P<table>[<>@A-Za-z0-9_]+)[\"\]]?\.[\"\[]?(?P<varname>[<>@A-Za-z0-9_]+|[\*])[\"\]]?(\s+AS\s+|\s)[\"\']?(?P<alias>[<>@A-Za-z0-9_]+)[\"\']?\s*(,|$)))', flags=re.IGNORECASE | re.MULTILINE)
