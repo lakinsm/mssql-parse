@@ -186,7 +186,7 @@ class SQLElement:
 		join_boundaries = []
 		join_clauses = []
 		consumed = set()
-		for m in globals.TSQL_JOINS.finditer(sql_text):
+		for m in globals.TSQL_JOIN_JOINTYPES.finditer(sql_text):
 			start = m.start()
 			stop = start + len(m.group()[0])
 			match_interval = set(range(start, stop))
@@ -215,16 +215,44 @@ class SQLElement:
 			output_q = deque()
 			while child_q:
 				self._expand_clause(child_q.popleft(), output_q, expanded)
-			expanded_clauses.append(''.join(output_q))
+			result_text = ''.join(output_q)
+			if jointype.upper() == 'FROM':
+				basetable = globals.TSQL_JOIN_BASETABLE.search(result_text).group('basetable')
+				print(basetable)  # TODO: add to relation data
+			else:
+				expanded_clauses.append(result_text)
 		for ec in expanded_clauses:
+			# TODO: remember USING
 			print(ec)
+			# Within each conditional clause
+			cond_clause_starts = [(m.start(), m.start()+len(m.groups()[0])) for m in globals.TSQL_JOIN_MAJOROPS.finditer(ec)]
+			for i in range(len(cond_clause_starts)):
+				start, stop = cond_clause_starts[i]
+				if i == 0:
+					cond_clause_text = ec[:start]
+					basetable = globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
+					print(basetable)  # TODO: add to relation data
+				else:
+					if (i+1) == len(cond_clause_starts):
+						cond_clause_text = ec[stop:]
+					else:
+						next_start = cond_clause_starts[i+1][0]
+						cond_clause_text = ec[stop:next_start]
+					# TODO: parse RHS/LHS by Op
+					print(cond_clause_text)
+					op_match = globals.TSQL_JOIN_ALLOPS.finditer(cond_clause_text)  # TODO: issues with this regex
+			# self._parse_relations(ec)
 		sys.exit()
 
-		# TODO: table relation finding -> remember USING
+	def _extract_relations(self, clause_text: str) -> None:
+		"""
+		Extract table/column relations, intended for from/join clauses.
+		"""
+		
 
 	def _expand_clause(self, substring: str, q: deque, seen: set) -> None:
 		"""
-		Add characters to output queue DFS order
+		Add characters to output queue DFS order.
 		"""
 		symbolic_starts = {}
 		symbolic_idxs = set()
@@ -832,7 +860,7 @@ if __name__ == '__main__':
 		JOIN cte3
 			ON mytable3.key1 = cte3.key1
 		JOIN cte2
-			ON mytable4.key1 = cte2.myvar1
+			ON mytable4.key1 LIKE '%' + cte2.myvar1 + '%'
 		FULL JOIN cte4
 			ON mytable4.key1 = cte4.key1
 		LEFT JOIN cte5
