@@ -204,9 +204,22 @@ class SQLElement:
 				join_clauses.append((start, len(sql_text), jointype),)
 			else:
 				next_start = join_boundaries[i+1][0]
-				join_clauses.append((start, next_start, jointype),)		
+				join_clauses.append((start, next_start, jointype),)
 
 		# Within each clause, expand non-node symbolics
+		# TODO: 2026-01-25 -> the logic should be:
+		#	- Within each clause, find all symbolics
+		#	- Search (BFS/DFS) through symbolics, find children symbolics
+		#	- At each step, then parse majorops -> ops, find table relations with symbolics included
+		#	- Build a linked list of symbolics for what tables are related 
+		# 		- in tuple groups
+		# 		- kind of relation doesn't matter
+		#	- Scan through the linked list to build out table/field groups
+		# 		- Pull children into groups
+		#		- Result should be a list of related table groups for each clause
+		#			- Could list these as table1.var1 - table2.var2 - ...
+		#	- Ignore relations to non-database values, e.g. declared variables, hardcoded values
+		#		- TODO: could track declared vars but in a different way than tables/fields
 		expanded_clauses = []
 		for start, stop, jointype in join_clauses:
 			clause_text = sql_text[start:stop]
@@ -221,28 +234,32 @@ class SQLElement:
 				print(basetable)  # TODO: add to relation data
 			else:
 				expanded_clauses.append(result_text)
-		for ec in expanded_clauses:
-			# TODO: remember USING
-			print(ec)
-			# Within each conditional clause
-			cond_clause_starts = [(m.start(), m.start()+len(m.groups()[0])) for m in globals.TSQL_JOIN_MAJOROPS.finditer(ec)]
-			for i in range(len(cond_clause_starts)):
-				start, stop = cond_clause_starts[i]
-				if i == 0:
-					cond_clause_text = ec[:start]
-					basetable = globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
-					print(basetable)  # TODO: add to relation data
-				else:
-					if (i+1) == len(cond_clause_starts):
-						cond_clause_text = ec[stop:]
-					else:
-						next_start = cond_clause_starts[i+1][0]
-						cond_clause_text = ec[stop:next_start]
-					# TODO: parse RHS/LHS by Op
-					print(cond_clause_text)
-					op_match = globals.TSQL_JOIN_ALLOPS.finditer(cond_clause_text)  # TODO: issues with this regex
+
+		# # TODO: may need to move this into a function within the DFS tree due to nested operators
+		# for ec in expanded_clauses:
+		# 	# TODO: remember USING
+		# 	print(ec)
+		# 	# Within each conditional clause
+		# 	# TODO: may need to mask BETWEEN _ AND _
+		# 	cond_clause_starts = [(m.start(), m.start()+len(m.groups()[0])) for m in globals.TSQL_JOIN_MAJOROPS.finditer(ec)]
+		# 	for i in range(len(cond_clause_starts)):
+		# 		start, stop = cond_clause_starts[i]
+		# 		if i == 0:
+		# 			cond_clause_text = ec[:start]
+		# 			basetable = globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
+		# 			print(basetable)  # TODO: add to relation data
+		# 		else:
+		# 			if (i+1) == len(cond_clause_starts):
+		# 				cond_clause_text = ec[stop:]
+		# 			else:
+		# 				next_start = cond_clause_starts[i+1][0]
+		# 				cond_clause_text = ec[stop:next_start]
+		# 			# TODO: parse RHS/LHS by Op
+		# 			print(cond_clause_text)
+		# 			op_match = globals.TSQL_JOIN_ALLOPS.finditer(cond_clause_text)
+		# 			op_starts = [x.start() for x in op_match]
 			# self._parse_relations(ec)
-		sys.exit()
+		# sys.exit()
 
 	def _extract_relations(self, clause_text: str) -> None:
 		"""
@@ -760,7 +777,9 @@ if __name__ == '__main__':
 
 		-- Some variable definitions
 		DECLARE mychar1 = NVARCHAR(80);
+		DECLARE mydate1 = DATE;
 		SET mychar1 = 'example4';
+		SET mydate1 = '2100-10-15';
 
 		WITH
 		cte1 AS
@@ -860,13 +879,18 @@ if __name__ == '__main__':
 		JOIN cte3
 			ON mytable3.key1 = cte3.key1
 		JOIN cte2
-			ON mytable4.key1 LIKE '%' + cte2.myvar1 + '%'
+			ON LEFT(mytable4.key1, 3) LIKE '%' + cte2.myvar1 + '%'
 		FULL JOIN cte4
-			ON mytable4.key1 = cte4.key1
+			ON ('/mystring/' || mytable4.key1) = cte4.key1
+			AND (mytable3.string1 || mytable.key1) = cte4.key1
 		LEFT JOIN cte5
 			ON mytable4.key2 = cte5.key2
 			AND cte5.unnamedvar1 = "filtervalue"
-		WHERE mytable3.field5 = "bar4"
+			AND cte5.datevar1 BETWEEN mytable4.date1 AND mytable4.date2
+			AND cte5.datevar2 = @mydate1
+		WHERE 
+			mytable3.field5 = "bar4"
+			AND mytable4.date1 BETWEEN mytable4.date1 AND '2100-01-01'
 		ORDER BY mytable1.key1 DESC  -- Order by request of end users
 		
 		END;

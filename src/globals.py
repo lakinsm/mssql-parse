@@ -13,7 +13,7 @@ TSQL_SUBQUERY_ALIAS_SUFFIX = re.compile(r'\)(\s+AS\s+|\s+)[\"\']?(?P<alias>[A-Za
 TSQL_CTES = re.compile(r'\s*(?P<alias>[A-Za-z0-9_]+)\s+AS\s+(?P<table>[<>@A-Za-z0-9_]+)(\s|,|\.|$)', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_JOIN_JOINTYPES = re.compile(r'\s*(?P<jointype>(FULL OUTER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|CROSS JOIN|SELF JOIN|JOIN))\s+', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_JOIN_MAJOROPS = re.compile(r'(?P<majop>(ON|AND|OR))', flags=re.IGNORECASE | re.MULTILINE)
-TSQL_JOIN_ALLOPS = re.compile(r'', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_JOIN_ALLOPS = re.compile(r'(?P<op>\s+(<>|!=|>=|<=|!<|!>|\+=|\-=|\*=|/=|%=|&=|\|=|\^=|\|\||IS NOT NULL|IS NULL|NOT IN|AND|OR|NOT|IN|BETWEEN|LIKE|EXISTS|ALL|ANY|SOME|[\+\-\*/%<>=~&\|\^])\s+)', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_JOIN_BASETABLE = re.compile(r'(?P<jointype>(FULL OUTER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|CROSS JOIN|SELF JOIN|JOIN|FROM))\s+(?P<basetable>[A-Za-z0-9_]+)(\s*|$)', flags=re.IGNORECASE | re.MULTILINE)
 # TSQL_JOINCONDITIONS = re.compile(r'', flags=re.IGNORECASE | re.MULTILINE)
 
