@@ -148,10 +148,12 @@ class SQLElement:
 	def __init__(self, keyword: str, start: int, stop: int, text: str, non_subqueries: dict):
 		self._unclaimedvars = set()
 		self._basetables = {}
+		self._temp_jointables = {}
 		self.text = text
 		self.start = start
 		self.stop = stop
-		self.tablesvars = {}
+		self.selecttables = {}
+		self.jointables = {}
 		self.aliases = {}
 		self.relations = {}
 		self.non_subqueries = non_subqueries
@@ -176,8 +178,9 @@ class SQLElement:
 			))
 			raise(ValueError)
 		
-		print('TABLESVARS: ', self.tablesvars)
+		print('SELECTS: ', self.selecttables)
 		print('ALIASES: ', self.aliases)
+		print('JOINS: ', self.jointables)
 		print('UNCLAIMEDVARS: ', self._unclaimedvars)
 	
 	def _parse_joins(self, sql_text: str) -> None:
@@ -220,23 +223,71 @@ class SQLElement:
 				self._non_subquery_dfs(child_q.popleft(), opens, expanded)
 			if jointype.upper() == 'FROM':
 				basetable = globals.TSQL_JOIN_BASETABLE.search(clause_text).group('basetable')
-				self.relations.setdefault(basetable, [])
+				self.relations[0].setdefault(basetable, [])
 				print('Basetable: {}'.format(basetable))  # TODO: add to relation data
 		print(self.relations)
+		# DFS to resolve table relations
+		# TODO: could leave it as self.relations and move this DFS to outer (tree) scope
+		# 		so ambiguous fields can be resolved to a table first
+		self._resolve_tablevar_relations()
 		sys.exit()
-
+	
+	def _resolve_tablevar_relations(self) -> None:
+		"""
+		Using self.relations, determine tables and relations for this element into self.jointables
+		"""
+		self._resolve_relation_dfs(0)
+		print('JOINS:')
+		for basetable, relations in self._temp_jointables[0].items():
+			self.jointables[basetable] = relations
+			print(basetable)
+			for r in relations:
+				print('\t{}'.format(r))
+	
+	def _resolve_relation_dfs(self, jointable_node: dict) -> None:
+		"""
+		Resolve nested jointable nodes for _resolve_tablevar_relations
+		"""
+		self._temp_jointables.setdefault(jointable_node, {})
+		for basetable, tablevars in self.relations[jointable_node].items():
+			self._temp_jointables[jointable_node].setdefault(basetable, [])
+			for linerelation in tablevars:
+				linevalue = {basetable: ''}
+				for table, var in linerelation:
+					symb_match = globals.TSQL_SYMBOLIC.search(var)
+					if symb_match:
+						symb = int(symb_match.group('symb'))
+						self._resolve_relation_dfs(symb)
+						# After DFS, self._temp_jointables will have data for child nodes
+						for sub_basetable, valuelist in self._temp_jointables[symb].items():
+							if len(linevalue[sub_basetable]) != 0:
+								linevalue[sub_basetable] += ' - '
+							for value in valuelist:
+								linevalue[sub_basetable] += '({})'.format(value)
+								# TODO: still dropping mytable2.key1... from mytable4
+								# TODO: formatting for sub-relations
+					else:
+						value = '.'.join([table, var]) if table else '?.{}'.format(var)
+						if len(linevalue[basetable]) != 0:
+							linevalue[basetable] += ' - '
+						linevalue[basetable] += value
+				for k, v in linevalue.items():
+					self._temp_jointables[jointable_node][k].append(v)
+					
 	def _non_subquery_dfs(self, substring: str, opens: deque, seen: set) -> None:
 		"""
 		Add characters to output queue DFS order.
 		"""
 		# Find current level relations here - keep symbolics
 		# - use first symbolic only for nesteds, but use all for same-level
-		self._extract_relations(self._with_outer_symbolics(substring), opens[-1])
+		this_node = opens[-1]
+		self.relations.setdefault(this_node, {})
+		self._extract_relations(self._with_outer_symbolics(substring), this_node)
 		for m in globals.TSQL_SYMBOLIC.finditer(substring):
 			symb = int(m.group('symb'))
 			if symb in self.non_subqueries and symb not in seen:
 				seen.add(symb)
-				self._basetables.setdefault(symb, self._basetables[opens[-1]])
+				self._basetables.setdefault(symb, self._basetables[this_node])
 				opens.append(symb)
 				self._non_subquery_dfs(self.non_subqueries[symb], opens, seen)
 		opens.pop()
@@ -258,22 +309,32 @@ class SQLElement:
 		# Parse by major operator (AND|OR|NOT)
 		self._basetables.setdefault(current_node, None)
 		cond_clause_starts = [m.span('majop') for m in globals.TSQL_JOIN_MAJOROPS.finditer(clause_text)]
+		if not cond_clause_starts:
+			cond_clause_starts = [(None, None)]
 		for i in range(len(cond_clause_starts)):
 			start, stop = cond_clause_starts[i]
-			if i == 0:
-				cond_clause_text = clause_text[:start]
+			if not start:
+				cond_clause_text = clause_text
 				basetable = globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
 				if basetable:
 					self._basetables[current_node] = basetable.group('basetable')
-					self.relations.setdefault(self._basetables[current_node], [])
+					self.relations[current_node].setdefault(self._basetables[current_node], [])
 				print('\t\tBasetable: {}'.format(self._basetables[current_node]))  # TODO: add to relation data
-			if (i+1) == len(cond_clause_starts):
-				cond_clause_text = clause_text[stop:]
 			else:
-				next_start = cond_clause_starts[i+1][0]
-				cond_clause_text = clause_text[stop:next_start]
-			print('\t\tMAJOP Clause: {}'.format(cond_clause_text))
-			# Parse further by comparison operator -> LHS - RHS
+				if i == 0:
+					cond_clause_text = clause_text[:start]
+					basetable = globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
+					if basetable:
+						self._basetables[current_node] = basetable.group('basetable')
+						self.relations[current_node].setdefault(self._basetables[current_node], [])
+					print('\t\tBasetable: {}'.format(self._basetables[current_node]))  # TODO: add to relation data
+				if (i+1) == len(cond_clause_starts):
+					cond_clause_text = clause_text[stop:]
+				else:
+					next_start = cond_clause_starts[i+1][0]
+					cond_clause_text = clause_text[stop:next_start]
+				print('\t\tMAJOP Clause: {}'.format(cond_clause_text))
+				# Parse further by comparison operator -> LHS - RHS
 			op_match = globals.TSQL_JOIN_ALLOPS.finditer(cond_clause_text)
 			op_starts = [x.span('op') for x in op_match]
 			print('\t\t\tOp: {}'.format([x.group('op') for x in globals.TSQL_JOIN_ALLOPS.finditer(cond_clause_text)]))
@@ -285,11 +346,31 @@ class SQLElement:
 				raise ValueError
 			if not op_starts:
 				relations = self._extract_tablevar(cond_clause_text)
-				self.relations.setdefault(self._basetables[current_node], []).append(relations[0])
+				print('\t\t\tRelations: {}'.format(relations))
+				self.relations[current_node].setdefault(self._basetables[current_node], []).append((relations[0],))
 			else:
+				# Note: for comparisons on the same precendence level, we do not care about
+				# evaluation order for the purposes of this parser: they will be displayed as
+				# Field1 - Field2 - Field3, even though they might be evaluated in precendence order
+				# (Field1 - Field2) - Field3.  Explicit parentheses will be retained, however, since 
+				# they trigger a symbolic masking, 
+				# e.g. Field1 - (Subquery1_Field2 - Subquery1_Field3) will display as
+				# Field1 - (Field2 - Field3)
+				relations = tuple()
 				for j in range(len(op_starts)):
-					x = 1  # TODO: extract_tablevar for rhs/lhs w/ ops, may need to verify field exists in DFS later
-					# TODO: self.relations probably needs to be split out by current_node to handl nested symbolics
+					op_start, op_end = op_starts[j]
+					if j == 0:
+						lhs = cond_clause_text[:op_start]
+						relations += self._extract_tablevar(lhs)
+					if (j+1) == len(op_starts):
+						rhs = cond_clause_text[op_end:]
+						relations += self._extract_tablevar(rhs)
+					else:
+						next_op_start = op_starts[j+1][0]
+						rhs = cond_clause_text[op_end:next_op_start]
+						relations += self._extract_tablevar(rhs)
+				print('\t\t\tRelations: {}'.format(relations))
+				self.relations[current_node].setdefault(self._basetables[current_node], []).append(relations)
 
 	@staticmethod
 	def _extract_tablevar(rhslhs_text: str) -> tuple[str, str]:
@@ -299,15 +380,15 @@ class SQLElement:
 		"""
 		seen = set()
 		seen_idxs = set()
-		table_vars = []
+		table_vars = tuple()
 		for m in globals.TSQL_RHSLHS_VARTABLE_NAMED.finditer(rhslhs_text):
-			table, var = m.groups('table', 'varname')
-			spans = [m.start('table'), m.end('table'), m.start('varname'), m.end('varname')]
-			spans = (min(x for x in spans if x), max(x for x in spans if x))
-			match_idxs = set(x for x in range(spans[0], spans[1]))
+			table, var = m.group('table', 'varname')
+			spans = [x for x in [m.start('table'), m.end('table'), m.start('varname'), m.end('varname')] if x is not None]
+			match_start, match_end = min(spans), max(spans)
+			match_idxs = set(x for x in range(match_start, match_end))
 			unique = '-'.join([x if x else '' for x in (table, var)])
 			if (unique not in seen) and not (seen_idxs.intersection(match_idxs)):
-				table_vars.append((table, var),)
+				table_vars += (table, var),
 				seen.add(unique)
 				seen_idxs.update(match_idxs)
 		for m in globals.TSQL_RHSLHS_VARTABLE_UNNAMED.finditer(rhslhs_text):
@@ -315,7 +396,7 @@ class SQLElement:
 			match_idxs = set(x for x in range(m.start('varname'), m.end('varname')))
 			unique = '-'.join([x if x else '' for x in (None, var)])
 			if (unique not in seen) and not (seen_idxs.intersection(match_idxs)):
-				table_vars.append((None, var),)
+				table_vars += (None, var),
 				seen.add(unique)
 				seen_idxs.update(match_idxs)
 		return table_vars
@@ -326,12 +407,12 @@ class SQLElement:
 		"""
 		for m in globals.TSQL_CTES.finditer(sql_text):
 			table, alias = m.group('table', 'alias')  # table will be a symbolic here
-			self.tablesvars.setdefault(table, set())
+			self.selecttables.setdefault(table, set())
 			self.aliases[alias] = (None, table)  # table alias, no var
 
 	def _parse_tables_vars(self, sql_text:str) -> None:
 		"""
-		Store table, var, and alias info into self.tablesvars and self.aliases 
+		Store table, var, and alias info into self.selecttables and self.aliases 
 		with None if element missing.
 		"""
 		consumed = set()
@@ -342,7 +423,7 @@ class SQLElement:
 			match_interval = set(range(start, stop))
 			if not consumed.intersection(match_interval):
 				table, varname, alias = m.group('table', 'varname', 'alias')
-				self.tablesvars.setdefault(table, set()).add(varname)
+				self.selecttables.setdefault(table, set()).add(varname)
 				if alias not in globals.ODBC_KEYWORDS:
 					self.aliases[alias] = (varname, table)
 			consumed.update(match_interval)
@@ -354,7 +435,7 @@ class SQLElement:
 			match_interval = set(range(start, stop))
 			if not consumed.intersection(match_interval):
 				table, varname = m.group('table', 'varname')
-				self.tablesvars.setdefault(table, set()).add(varname)
+				self.selecttables.setdefault(table, set()).add(varname)
 			consumed.update(match_interval)
 
 		# 3. var AS alias
