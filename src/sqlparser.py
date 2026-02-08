@@ -147,11 +147,13 @@ class SQLElement:
 	"""
 	def __init__(self, keyword: str, start: int, stop: int, text: str, non_subqueries: dict):
 		self._unclaimedvars = set()
+		self._basetables = {}
 		self.text = text
 		self.start = start
 		self.stop = stop
 		self.tablesvars = {}
 		self.aliases = {}
+		self.relations = {}
 		self.non_subqueries = non_subqueries
 
 		print('\n{}'.format(text))
@@ -194,6 +196,7 @@ class SQLElement:
 				jointype = m.group('jointype')
 				join_boundaries.append((start, jointype),)
 			consumed.update(match_interval)
+
 		for i in range(len(join_boundaries)):
 			start, jointype = join_boundaries[i]
 			if i == 0:
@@ -206,91 +209,115 @@ class SQLElement:
 				next_start = join_boundaries[i+1][0]
 				join_clauses.append((start, next_start, jointype),)
 
-		# Within each clause, expand non-node symbolics
-		# TODO: 2026-01-25 -> the logic should be:
-		#	- Within each clause, find all symbolics
-		#	- Search (BFS/DFS) through symbolics, find children symbolics
-		#	- At each step, then parse majorops -> ops, find table relations with symbolics included
-		#	- Build a linked list of symbolics for what tables are related 
-		# 		- in tuple groups
-		# 		- kind of relation doesn't matter
-		#	- Scan through the linked list to build out table/field groups
-		# 		- Pull children into groups
-		#		- Result should be a list of related table groups for each clause
-		#			- Could list these as table1.var1 - table2.var2 - ...
-		#	- Ignore relations to non-database values, e.g. declared variables, hardcoded values
-		#		- TODO: could track declared vars but in a different way than tables/fields
-		expanded_clauses = []
 		for start, stop, jointype in join_clauses:
 			clause_text = sql_text[start:stop]
+			print(start, stop, jointype, '\t{}'.format(clause_text))
 			expanded = set()
 			child_q = deque([clause_text])
-			output_q = deque()
+			# Find table relations in non-subquery
+			opens = deque([0])
 			while child_q:
-				self._expand_clause(child_q.popleft(), output_q, expanded)
-			result_text = ''.join(output_q)
+				self._non_subquery_dfs(child_q.popleft(), opens, expanded)
 			if jointype.upper() == 'FROM':
-				basetable = globals.TSQL_JOIN_BASETABLE.search(result_text).group('basetable')
-				print(basetable)  # TODO: add to relation data
-			else:
-				expanded_clauses.append(result_text)
+				basetable = globals.TSQL_JOIN_BASETABLE.search(clause_text).group('basetable')
+				self.relations.setdefault(basetable, [])
+				print('Basetable: {}'.format(basetable))  # TODO: add to relation data
+		print(self.relations)
+		sys.exit()
 
-		# # TODO: may need to move this into a function within the DFS tree due to nested operators
-		# for ec in expanded_clauses:
-		# 	# TODO: remember USING
-		# 	print(ec)
-		# 	# Within each conditional clause
-		# 	# TODO: may need to mask BETWEEN _ AND _
-		# 	cond_clause_starts = [(m.start(), m.start()+len(m.groups()[0])) for m in globals.TSQL_JOIN_MAJOROPS.finditer(ec)]
-		# 	for i in range(len(cond_clause_starts)):
-		# 		start, stop = cond_clause_starts[i]
-		# 		if i == 0:
-		# 			cond_clause_text = ec[:start]
-		# 			basetable = globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
-		# 			print(basetable)  # TODO: add to relation data
-		# 		else:
-		# 			if (i+1) == len(cond_clause_starts):
-		# 				cond_clause_text = ec[stop:]
-		# 			else:
-		# 				next_start = cond_clause_starts[i+1][0]
-		# 				cond_clause_text = ec[stop:next_start]
-		# 			# TODO: parse RHS/LHS by Op
-		# 			print(cond_clause_text)
-		# 			op_match = globals.TSQL_JOIN_ALLOPS.finditer(cond_clause_text)
-		# 			op_starts = [x.start() for x in op_match]
-			# self._parse_relations(ec)
-		# sys.exit()
-
-	def _extract_relations(self, clause_text: str) -> None:
-		"""
-		Extract table/column relations, intended for from/join clauses.
-		"""
-		
-
-	def _expand_clause(self, substring: str, q: deque, seen: set) -> None:
+	def _non_subquery_dfs(self, substring: str, opens: deque, seen: set) -> None:
 		"""
 		Add characters to output queue DFS order.
 		"""
-		symbolic_starts = {}
-		symbolic_idxs = set()
-		for m in globals.MSSQL_SYMBOLIC.finditer(substring):
-			symbolic_starts[m.start()] = int(m.group(2))
-			start = m.start()
-			stop = m.start() + len(m.groups()[0])
-			if substring[stop] == '.':
-				q.append(' ')
-				stop += 1
-			symbolic_idxs.update(range(start+1, stop))
-		for i in range(len(substring)):
-			if i in symbolic_idxs:
-				continue
-			elif i in symbolic_starts:
-				symb = symbolic_starts[i]
-				if symb in self.non_subqueries and symb not in seen:
-					seen.add(symb)
-					self._expand_clause(self.non_subqueries[symb], q, seen)
+		# Find current level relations here - keep symbolics
+		# - use first symbolic only for nesteds, but use all for same-level
+		self._extract_relations(self._with_outer_symbolics(substring), opens[-1])
+		for m in globals.TSQL_SYMBOLIC.finditer(substring):
+			symb = int(m.group('symb'))
+			if symb in self.non_subqueries and symb not in seen:
+				seen.add(symb)
+				self._basetables.setdefault(symb, self._basetables[opens[-1]])
+				opens.append(symb)
+				self._non_subquery_dfs(self.non_subqueries[symb], opens, seen)
+		opens.pop()
+	
+	@staticmethod
+	def _with_outer_symbolics(clause_text: str) -> str:
+		"""
+		Return the clause_text with only top-level symbolics; remove nested symbolics.
+		"""
+		matches = globals.TSQL_SYMBOLIC_OUTER.finditer(clause_text)
+		exclude_idxs = set(x for y in (range(m.end('outer_symb'), m.end()) for m in matches) for x in y)
+		return ''.join(x for i, x in enumerate(clause_text) if i not in exclude_idxs)
+	
+	def _extract_relations(self, clause_text: str, current_node: int) -> None:
+		"""
+		Extract table/column relations, intended for from/join clauses.
+		"""
+		print('\tNode: {}\t{}'.format(current_node, clause_text))
+		# Parse by major operator (AND|OR|NOT)
+		self._basetables.setdefault(current_node, None)
+		cond_clause_starts = [m.span('majop') for m in globals.TSQL_JOIN_MAJOROPS.finditer(clause_text)]
+		for i in range(len(cond_clause_starts)):
+			start, stop = cond_clause_starts[i]
+			if i == 0:
+				cond_clause_text = clause_text[:start]
+				basetable = globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
+				if basetable:
+					self._basetables[current_node] = basetable.group('basetable')
+					self.relations.setdefault(self._basetables[current_node], [])
+				print('\t\tBasetable: {}'.format(self._basetables[current_node]))  # TODO: add to relation data
+			if (i+1) == len(cond_clause_starts):
+				cond_clause_text = clause_text[stop:]
 			else:
-				q.append(substring[i])
+				next_start = cond_clause_starts[i+1][0]
+				cond_clause_text = clause_text[stop:next_start]
+			print('\t\tMAJOP Clause: {}'.format(cond_clause_text))
+			# Parse further by comparison operator -> LHS - RHS
+			op_match = globals.TSQL_JOIN_ALLOPS.finditer(cond_clause_text)
+			op_starts = [x.span('op') for x in op_match]
+			print('\t\t\tOp: {}'.format([x.group('op') for x in globals.TSQL_JOIN_ALLOPS.finditer(cond_clause_text)]))
+			if not self._basetables[current_node]:
+				sys.stderr.write('ERROR: No basetable found for node {} conditional clause: {}\n'.format(
+					current_node, 
+					cond_clause_text
+				))
+				raise ValueError
+			if not op_starts:
+				relations = self._extract_tablevar(cond_clause_text)
+				self.relations.setdefault(self._basetables[current_node], []).append(relations[0])
+			else:
+				for j in range(len(op_starts)):
+					x = 1  # TODO: extract_tablevar for rhs/lhs w/ ops, may need to verify field exists in DFS later
+
+	@staticmethod
+	def _extract_tablevar(rhslhs_text: str) -> tuple[str, str]:
+		"""
+		Return table - var relation if present (no alias searching here),
+		otherwise return (None, var).  Symbolics are included as vars.
+		"""
+		seen = set()
+		seen_idxs = set()
+		table_vars = []
+		for m in globals.TSQL_RHSLHS_VARTABLE_NAMED.finditer(rhslhs_text):
+			table, var = m.groups('table', 'varname')
+			spans = [m.start('table'), m.end('table'), m.start('varname'), m.end('varname')]
+			spans = (min(x for x in spans if x), max(x for x in spans if x))
+			match_idxs = set(x for x in range(spans[0], spans[1]))
+			unique = '-'.join([x if x else '' for x in (table, var)])
+			if (unique not in seen) and not (seen_idxs.intersection(match_idxs)):
+				table_vars.append((table, var),)
+				seen.add(unique)
+				seen_idxs.update(match_idxs)
+		for m in globals.TSQL_RHSLHS_VARTABLE_UNNAMED.finditer(rhslhs_text):
+			var = m.group('varname')
+			match_idxs = set(x for x in range(m.start('varname'), m.end('varname')))
+			unique = '-'.join([x if x else '' for x in (None, var)])
+			if (unique not in seen) and not (seen_idxs.intersection(match_idxs)):
+				table_vars.append((None, var),)
+				seen.add(unique)
+				seen_idxs.update(match_idxs)
+		return table_vars
 	
 	def _parse_ctes(self, sql_text: str) -> None:
 		"""
@@ -876,6 +903,7 @@ if __name__ == '__main__':
 			SELECT groupid1, MAX(field1), SUM(field2) FROM mytable6 WHERE foobar = 'example2' 
 			GROUP BY groupid1
 		) "groupsum"
+			ON mt4.key1 = groupsum.groupid1
 		JOIN cte3
 			ON mytable3.key1 = cte3.key1
 		JOIN cte2
@@ -891,9 +919,9 @@ if __name__ == '__main__':
 		WHERE 
 			mytable3.field5 = "bar4"
 			AND mytable4.date1 BETWEEN mytable4.date1 AND '2100-01-01'
-		ORDER BY mytable1.key1 DESC  -- Order by request of end users
+		ORDER BY mytable1.key1 DESC;  -- Order by request of end users
 		
-		END;
+		END
 
 		/*
 		-- Trailing comment with indentation formatting because?

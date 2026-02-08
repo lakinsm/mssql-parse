@@ -1,6 +1,7 @@
 import re
 
-MSSQL_SYMBOLIC = re.compile(r'(?P<symb><@([0-9]+)>)', flags=re.MULTILINE)
+TSQL_SYMBOLIC = re.compile(r'<@(?P<symb>[0-9]+)>', flags=re.MULTILINE)
+TSQL_SYMBOLIC_OUTER = re.compile(r'(?P<outer_symb><@[0-9]+>)[\.\^]?((<@[0-9]+>[\.\^-]?)+)?', flags=re.IGNORECASE | re.MULTILINE)
 IS_SQL_QUERY = re.compile(r'\(.*(?=(SELECT)).*\)', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_STATEMENTS = re.compile(r'\s*(WITH|SELECT|FROM|WHERE|GROUP BY|ORDER BY|OFFSET|FETCH)\s*', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_ROWOPS = re.compile(r'\s*(INTERSECT|EXCEPT|UNION ALL|UNION)\s*', flags=re.IGNORECASE | re.MULTILINE)
@@ -15,7 +16,8 @@ TSQL_JOIN_JOINTYPES = re.compile(r'\s*(?P<jointype>(FULL OUTER JOIN|LEFT OUTER J
 TSQL_JOIN_MAJOROPS = re.compile(r'(?P<majop>(ON|AND|OR))', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_JOIN_ALLOPS = re.compile(r'(?P<op>\s+(<>|!=|>=|<=|!<|!>|\+=|\-=|\*=|/=|%=|&=|\|=|\^=|\|\||IS NOT NULL|IS NULL|NOT IN|AND|OR|NOT|IN|BETWEEN|LIKE|EXISTS|ALL|ANY|SOME|[\+\-\*/%<>=~&\|\^])\s+)', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_JOIN_BASETABLE = re.compile(r'(?P<jointype>(FULL OUTER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|CROSS JOIN|SELF JOIN|JOIN|FROM))\s+(?P<basetable>[A-Za-z0-9_]+)(\s*|$)', flags=re.IGNORECASE | re.MULTILINE)
-# TSQL_JOINCONDITIONS = re.compile(r'', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_RHSLHS_VARTABLE_NAMED = re.compile(r'[\"\[]?(?P<table>[<>@A-Za-z0-9_]+)[\"\]]?\.[\"\[]?(?P<varname>[<>@A-Za-z0-9_]+)[\"\]]?', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_RHSLHS_VARTABLE_UNNAMED = re.compile(r'[\"\[]?(?P<varname>[<>@A-Za-z0-9_]+)[\"\]]?', flags=re.IGNORECASE | re.MULTILINE)
 
 # TSQL_ = re.compile(r'', flags=re.IGNORECASE | re.MULTILINE)
 
