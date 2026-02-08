@@ -289,6 +289,7 @@ class SQLElement:
 			else:
 				for j in range(len(op_starts)):
 					x = 1  # TODO: extract_tablevar for rhs/lhs w/ ops, may need to verify field exists in DFS later
+					# TODO: self.relations probably needs to be split out by current_node to handl nested symbolics
 
 	@staticmethod
 	def _extract_tablevar(rhslhs_text: str) -> tuple[str, str]:
