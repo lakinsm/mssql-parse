@@ -192,12 +192,12 @@ class SQLElement:
 		join_clauses = []
 		consumed = set()
 		for m in globals.TSQL_JOIN_JOINTYPES.finditer(sql_text):
-			start = m.start()
-			stop = start + len(m.group()[0])
-			match_interval = set(range(start, stop))
+			keyword_start = m.start('jointype')
+			clause_stop = keyword_start + len(m.group()[0])
+			match_interval = set(range(keyword_start, clause_stop))
 			if not consumed.intersection(match_interval):
 				jointype = m.group('jointype')
-				join_boundaries.append((start, jointype),)
+				join_boundaries.append((keyword_start, jointype),)
 			consumed.update(match_interval)
 
 		for i in range(len(join_boundaries)):
@@ -252,27 +252,29 @@ class SQLElement:
 		for basetable, tablevars in self.relations[jointable_node].items():
 			self._temp_jointables[jointable_node].setdefault(basetable, [])
 			for linerelation in tablevars:
-				linevalue = {basetable: ''}
-				for table, var in linerelation:
-					symb_match = globals.TSQL_SYMBOLIC.search(var)
-					if symb_match:
-						symb = int(symb_match.group('symb'))
-						self._resolve_relation_dfs(symb)
-						# After DFS, self._temp_jointables will have data for child nodes
-						for sub_basetable, valuelist in self._temp_jointables[symb].items():
-							if len(linevalue[sub_basetable]) != 0:
-								linevalue[sub_basetable] += ' - '
-							for value in valuelist:
-								linevalue[sub_basetable] += '({})'.format(value)
-								# TODO: still dropping mytable2.key1... from mytable4
-								# TODO: formatting for sub-relations
-					else:
-						value = '.'.join([table, var]) if table else '?.{}'.format(var)
-						if len(linevalue[basetable]) != 0:
-							linevalue[basetable] += ' - '
-						linevalue[basetable] += value
-				for k, v in linevalue.items():
-					self._temp_jointables[jointable_node][k].append(v)
+				linevalues = {basetable: []}
+				for op_clause in linerelation:
+					op_clause_concats = []
+					for table, var in op_clause:
+						symb_match = globals.TSQL_SYMBOLIC.search(var)
+						if var.strip().upper() in globals.ODBC_KEYWORDS:
+							continue
+						elif symb_match:
+							symb = int(symb_match.group('symb'))
+							self._resolve_relation_dfs(symb)
+							# After DFS, self._temp_jointables will have data for child nodes
+							for sub_basetable, valuelist in self._temp_jointables[symb].items():
+								for value in valuelist:
+									if value:
+										linevalues[sub_basetable].append('({})'.format(value))
+						else:
+							value = '.'.join([table, var]) if table else '?.{}'.format(var)
+							op_clause_concats.append(value)
+					linevalues[basetable].append(' - '.join(op_clause_concats))
+				for table, valuelist in linevalues.items():
+					for value in valuelist:
+						if value:
+							self._temp_jointables[jointable_node][table].append(value)
 					
 	def _non_subquery_dfs(self, substring: str, opens: deque, seen: set) -> None:
 		"""
@@ -313,14 +315,15 @@ class SQLElement:
 			cond_clause_starts = [(None, None)]
 		for i in range(len(cond_clause_starts)):
 			start, stop = cond_clause_starts[i]
-			if not start:
+			if start is None:
 				cond_clause_text = clause_text
 				basetable = globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
 				if basetable:
 					self._basetables[current_node] = basetable.group('basetable')
 					self.relations[current_node].setdefault(self._basetables[current_node], [])
 				print('\t\tBasetable: {}'.format(self._basetables[current_node]))  # TODO: add to relation data
-			else:
+				self._extract_ops(cond_clause_text, current_node)
+			else:  # Note that _extract_ops executes 1-2 times per loop for this fork
 				if i == 0:
 					cond_clause_text = clause_text[:start]
 					basetable = globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
@@ -328,49 +331,71 @@ class SQLElement:
 						self._basetables[current_node] = basetable.group('basetable')
 						self.relations[current_node].setdefault(self._basetables[current_node], [])
 					print('\t\tBasetable: {}'.format(self._basetables[current_node]))  # TODO: add to relation data
+					self._extract_ops(cond_clause_text, current_node)
 				if (i+1) == len(cond_clause_starts):
 					cond_clause_text = clause_text[stop:]
 				else:
 					next_start = cond_clause_starts[i+1][0]
 					cond_clause_text = clause_text[stop:next_start]
 				print('\t\tMAJOP Clause: {}'.format(cond_clause_text))
-				# Parse further by comparison operator -> LHS - RHS
-			op_match = globals.TSQL_JOIN_ALLOPS.finditer(cond_clause_text)
-			op_starts = [x.span('op') for x in op_match]
-			print('\t\t\tOp: {}'.format([x.group('op') for x in globals.TSQL_JOIN_ALLOPS.finditer(cond_clause_text)]))
-			if not self._basetables[current_node]:
-				sys.stderr.write('ERROR: No basetable found for node {} conditional clause: {}\n'.format(
-					current_node, 
-					cond_clause_text
-				))
-				raise ValueError
-			if not op_starts:
-				relations = self._extract_tablevar(cond_clause_text)
-				print('\t\t\tRelations: {}'.format(relations))
-				self.relations[current_node].setdefault(self._basetables[current_node], []).append((relations[0],))
-			else:
-				# Note: for comparisons on the same precendence level, we do not care about
-				# evaluation order for the purposes of this parser: they will be displayed as
-				# Field1 - Field2 - Field3, even though they might be evaluated in precendence order
-				# (Field1 - Field2) - Field3.  Explicit parentheses will be retained, however, since 
-				# they trigger a symbolic masking, 
-				# e.g. Field1 - (Subquery1_Field2 - Subquery1_Field3) will display as
-				# Field1 - (Field2 - Field3)
-				relations = tuple()
-				for j in range(len(op_starts)):
-					op_start, op_end = op_starts[j]
-					if j == 0:
-						lhs = cond_clause_text[:op_start]
-						relations += self._extract_tablevar(lhs)
-					if (j+1) == len(op_starts):
-						rhs = cond_clause_text[op_end:]
-						relations += self._extract_tablevar(rhs)
-					else:
-						next_op_start = op_starts[j+1][0]
-						rhs = cond_clause_text[op_end:next_op_start]
-						relations += self._extract_tablevar(rhs)
-				print('\t\t\tRelations: {}'.format(relations))
-				self.relations[current_node].setdefault(self._basetables[current_node], []).append(relations)
+				self._extract_ops(cond_clause_text, current_node)
+	
+	def _extract_ops(self, op_clause: str, current_node: int) -> None:
+		"""
+		Extract tables and variables from clauses split by operator.
+		"""
+		# Parse further by comparison operator -> LHS - RHS
+		op_match = globals.TSQL_JOIN_ALLOPS.finditer(op_clause)
+		op_starts = [m.span('op') for m in op_match]
+		print('\t\t\tOp: {}'.format([x.group('op') for x in globals.TSQL_JOIN_ALLOPS.finditer(op_clause)]))
+		if not self._basetables[current_node]:
+			sys.stderr.write('ERROR: No basetable found for node {} conditional clause: {}\n'.format(
+				current_node, 
+				op_clause
+			))
+			raise ValueError
+		if not op_starts:
+			relations = self._extract_tablevar(op_clause)
+			print('\t\t\tRelations: {}'.format(relations))
+			self.relations[current_node].setdefault(self._basetables[current_node], []).append(((relations[0],),))
+		else:
+			# Note: for comparisons on the same precendence level, we do not care about
+			# evaluation order for the purposes of this parser: they will be displayed as
+			# Field1 - Field2 - Field3, even though they might be evaluated in precendence order
+			# (Field1 - Field2) - Field3.  Explicit parentheses will be retained, however, since 
+			# they trigger a symbolic masking, 
+			# e.g. Field1 - (Subquery1_Field2 - Subquery1_Field3) will display as
+			# Field1 - (Field2 - Field3)
+			relations = tuple()
+			for j in range(len(op_starts)):
+				op_start, op_end = op_starts[j]
+				if j == 0:
+					lhs = op_clause[:op_start]
+					relations += self._extract_tablevar(lhs)
+				if (j+1) == len(op_starts):
+					rhs = op_clause[op_end:]
+					relations += self._extract_tablevar(rhs)
+				else:
+					next_op_start = op_starts[j+1][0]
+					rhs = op_clause[op_end:next_op_start]
+					relations += self._extract_tablevar(rhs)
+			# Determine if nested comparison or just parentheses for evaluation order
+			op_match = globals.TSQL_JOIN_ALLOPS.finditer(op_clause)
+			ops = [m.group('op') for m in op_match]
+			new_relations = []
+			pending = [relations[0]]
+			for e, j in enumerate(ops):
+				if j not in globals.LOGICAL_OPERATORS:
+					pending.append(relations[e+1])
+				else:
+					new_relations.append(pending)
+					pending = [relations[e+1]]
+				if (e+1) == len(ops):
+					new_relations.append(pending)
+			if new_relations:
+				relations = tuple(tuple(x) for x in new_relations)
+			print('\t\t\tRelations: {}'.format(relations))
+			self.relations[current_node].setdefault(self._basetables[current_node], []).append(tuple(relations))
 
 	@staticmethod
 	def _extract_tablevar(rhslhs_text: str) -> tuple[str, str]:

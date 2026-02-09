@@ -21,6 +21,13 @@ TSQL_RHSLHS_VARTABLE_UNNAMED = re.compile(r'[\"\[]?(?P<varname>[<>@A-Za-z0-9_]+)
 
 # TSQL_ = re.compile(r'', flags=re.IGNORECASE | re.MULTILINE)
 
+LOGICAL_OPERATORS = {
+    'AND',
+    'OR',
+    'NOT'
+}
+
+
 ODBC_KEYWORDS = {
 	'ABSOLUTE',
 	'ACTION',
