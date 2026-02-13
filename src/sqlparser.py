@@ -230,7 +230,7 @@ class SQLElement:
 		# TODO: could leave it as self.relations and move this DFS to outer (tree) scope
 		# 		so ambiguous fields can be resolved to a table first
 		self._resolve_tablevar_relations()
-		sys.exit()
+		
 	
 	def _resolve_tablevar_relations(self) -> None:
 		"""
@@ -265,16 +265,15 @@ class SQLElement:
 							# After DFS, self._temp_jointables will have data for child nodes
 							for sub_basetable, valuelist in self._temp_jointables[symb].items():
 								for value in valuelist:
-									if value:
-										linevalues[sub_basetable].append('({})'.format(value))
+									linevalues[sub_basetable].append('({})'.format(value))
 						else:
 							value = '.'.join([table, var]) if table else '?.{}'.format(var)
 							op_clause_concats.append(value)
-					linevalues[basetable].append(' - '.join(op_clause_concats))
+					if op_clause_concats:
+						linevalues[basetable].append(' - '.join(op_clause_concats))
 				for table, valuelist in linevalues.items():
 					for value in valuelist:
-						if value:
-							self._temp_jointables[jointable_node][table].append(value)
+						self._temp_jointables[jointable_node][table].append(value)
 					
 	def _non_subquery_dfs(self, substring: str, opens: deque, seen: set) -> None:
 		"""
@@ -372,18 +371,22 @@ class SQLElement:
 				if j == 0:
 					lhs = op_clause[:op_start]
 					relations += self._extract_tablevar(lhs)
+					print('LHS', lhs)
 				if (j+1) == len(op_starts):
 					rhs = op_clause[op_end:]
 					relations += self._extract_tablevar(rhs)
+					print('RHS', rhs)
 				else:
 					next_op_start = op_starts[j+1][0]
 					rhs = op_clause[op_end:next_op_start]
 					relations += self._extract_tablevar(rhs)
+					print('RHS', rhs)
 			# Determine if nested comparison or just parentheses for evaluation order
 			op_match = globals.TSQL_JOIN_ALLOPS.finditer(op_clause)
 			ops = [m.group('op') for m in op_match]
 			new_relations = []
 			pending = [relations[0]]
+			print(relations, ops)
 			for e, j in enumerate(ops):
 				if j not in globals.LOGICAL_OPERATORS:
 					pending.append(relations[e+1])
@@ -392,6 +395,7 @@ class SQLElement:
 					pending = [relations[e+1]]
 				if (e+1) == len(ops):
 					new_relations.append(pending)
+					break
 			if new_relations:
 				relations = tuple(tuple(x) for x in new_relations)
 			print('\t\t\tRelations: {}'.format(relations))

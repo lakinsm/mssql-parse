@@ -28,6 +28,12 @@ LOGICAL_OPERATORS = {
 }
 
 
+ARITHMETIC_OPERATORS = {
+    '+', '-', '/', '|',
+    '%', '&', '^', '*'
+}
+
+
 ODBC_KEYWORDS = {
 	'ABSOLUTE',
 	'ACTION',
