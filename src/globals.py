@@ -18,7 +18,7 @@ TSQL_JOIN_ALLOPS = re.compile(r'(?P<op>\s+(<>|!=|>=|<=|!<|!>|\+=|\-=|\*=|/=|%=|&
 TSQL_JOIN_BASETABLE = re.compile(r'(?P<jointype>(FULL OUTER JOIN|LEFT OUTER JOIN|RIGHT OUTER JOIN|FULL JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|CROSS JOIN|SELF JOIN|JOIN|FROM))\s+(?P<basetable>[A-Za-z0-9_]+)(\s*|$)', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_RHSLHS_VARTABLE_NAMED = re.compile(r'[\"\[]?(?P<table>[<>@A-Za-z0-9_]+)[\"\]]?\.[\"\[]?(?P<varname>[<>@A-Za-z0-9_]+)[\"\]]?', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_RHSLHS_VARTABLE_UNNAMED = re.compile(r'[\"\[]?(?P<varname>[<>@A-Za-z0-9_]+)[\"\]]?', flags=re.IGNORECASE | re.MULTILINE)
-
+TSQL_BETWEEN_AND = re.compile(r'\s+(?P<between>BETWEEN)((?!AND).)+(?P<and>AND)\s+', flags=re.IGNORECASE | re.MULTILINE)
 # TSQL_ = re.compile(r'', flags=re.IGNORECASE | re.MULTILINE)
 
 LOGICAL_OPERATORS = {

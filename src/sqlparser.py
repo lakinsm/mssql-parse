@@ -248,6 +248,9 @@ class SQLElement:
 		"""
 		Resolve nested jointable nodes for _resolve_tablevar_relations
 		"""
+		# TODO: 2026-02-16 take a look at arranging symbolics on same line if nested with other ops
+		# DATEADD<@18> BETWEEN X AND Y:
+		# '(cte5.datevar1)', 'mytable4.date1 - mytable4.date2', should be within the same line
 		self._temp_jointables.setdefault(jointable_node, {})
 		for basetable, tablevars in self.relations[jointable_node].items():
 			self._temp_jointables[jointable_node].setdefault(basetable, [])
@@ -307,9 +310,21 @@ class SQLElement:
 		Extract table/column relations, intended for from/join clauses.
 		"""
 		print('\tNode: {}\t{}'.format(current_node, clause_text))
+		# Mask specific phrases
+		phrase_masks = set()
+		for (btwn_start, btwn_stop), (and_start, and_stop) in self._extract_between(clause_text):
+			print(clause_text[btwn_start:and_stop])
+			phrase_masks.update(set(range(btwn_start, btwn_stop)))
+			phrase_masks.update(set(range(and_start, and_stop)))
 		# Parse by major operator (AND|OR|NOT)
 		self._basetables.setdefault(current_node, None)
 		cond_clause_starts = [m.span('majop') for m in globals.TSQL_JOIN_MAJOROPS.finditer(clause_text)]
+		phrase_mask_idxs = set()
+		for i, (start, stop) in enumerate(cond_clause_starts):
+			this_span = set(range(start, stop))
+			if phrase_masks.intersection(this_span):
+				phrase_mask_idxs.add(i)
+		cond_clause_starts = [x for i, x in enumerate(cond_clause_starts) if i not in phrase_mask_idxs]
 		if not cond_clause_starts:
 			cond_clause_starts = [(None, None)]
 		for i in range(len(cond_clause_starts)):
@@ -338,6 +353,13 @@ class SQLElement:
 					cond_clause_text = clause_text[stop:next_start]
 				print('\t\tMAJOP Clause: {}'.format(cond_clause_text))
 				self._extract_ops(cond_clause_text, current_node)
+	
+	@staticmethod
+	def _extract_between(clause_text: str) -> tuple:
+		"""
+		Extract clauses of format X BETWEEN Y AND Z.
+		"""
+		return((m.span('between'), m.span('and')) for m in globals.TSQL_BETWEEN_AND.finditer(clause_text))
 	
 	def _extract_ops(self, op_clause: str, current_node: int) -> None:
 		"""
@@ -1052,6 +1074,7 @@ if __name__ == '__main__':
 			ON mytable4.key2 = cte5.key2
 			AND cte5.unnamedvar1 = "filtervalue"
 			AND cte5.datevar1 BETWEEN mytable4.date1 AND mytable4.date2
+			AND DATEADD(day, 7, cte5.datevar1) BETWEEN mytable4.date1 AND mytable4.date2
 			AND cte5.datevar2 = @mydate1
 		WHERE 
 			mytable3.field5 = "bar4"
