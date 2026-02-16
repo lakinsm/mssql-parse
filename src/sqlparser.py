@@ -371,22 +371,18 @@ class SQLElement:
 				if j == 0:
 					lhs = op_clause[:op_start]
 					relations += self._extract_tablevar(lhs)
-					print('LHS', lhs)
 				if (j+1) == len(op_starts):
 					rhs = op_clause[op_end:]
 					relations += self._extract_tablevar(rhs)
-					print('RHS', rhs)
 				else:
 					next_op_start = op_starts[j+1][0]
 					rhs = op_clause[op_end:next_op_start]
 					relations += self._extract_tablevar(rhs)
-					print('RHS', rhs)
 			# Determine if nested comparison or just parentheses for evaluation order
 			op_match = globals.TSQL_JOIN_ALLOPS.finditer(op_clause)
 			ops = [m.group('op') for m in op_match]
 			new_relations = []
 			pending = [relations[0]]
-			print(relations, ops)
 			for e, j in enumerate(ops):
 				if j not in globals.LOGICAL_OPERATORS:
 					pending.append(relations[e+1])
@@ -398,7 +394,35 @@ class SQLElement:
 					break
 			if new_relations:
 				relations = tuple(tuple(x) for x in new_relations)
+			# Collapse arithemetics not informative for the SQL graph (e.g. '%' + var + '%')
+			relation_removes = set()
+			op_removes = set()
+			if len(relations[0]) != (len(ops) + 1):
+				sys.stderr.write('Number of relations ({}) must be one greater than number of ops ({}).\n'.format(
+					relations,
+					ops
+				))
+				raise ValueError
+			for e, j in enumerate(ops):
+				clean_op = j.strip()
+				if clean_op in globals.ARITHMETIC_OPERATORS:
+					lhs_null = all(x is None for x in relations[0][e])
+					rhs_null = all(x is None for x in relations[0][e+1])
+					if lhs_null:
+						if e not in relation_removes:
+							op_removes.add(e)
+						relation_removes.add(e)
+					if rhs_null:
+						if (e+1) not in relation_removes:
+							op_removes.add(e)
+						relation_removes.add(e+1)
+			new_ops = tuple(j for e, j in enumerate(ops) if e not in op_removes)
+			new_relations = tuple((j for e, j in enumerate(relations[0]) if e not in relation_removes))
+			ops = new_ops
+			relations = tuple()
+			relations += new_relations,
 			print('\t\t\tRelations: {}'.format(relations))
+			print('\t\t\tOps: {}'.format(ops))
 			self.relations[current_node].setdefault(self._basetables[current_node], []).append(tuple(relations))
 
 	@staticmethod
@@ -428,6 +452,8 @@ class SQLElement:
 				table_vars += (None, var),
 				seen.add(unique)
 				seen_idxs.update(match_idxs)
+		if not table_vars:
+			table_vars += (None, None),
 		return table_vars
 	
 	def _parse_ctes(self, sql_text: str) -> None:
