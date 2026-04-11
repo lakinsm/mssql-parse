@@ -149,6 +149,7 @@ class SQLElement:
 		self._unclaimedvars = set()
 		self._basetables = {}
 		self._temp_jointables = {}
+		self._temp_symbtables = {}
 		self.text = text
 		self.start = start
 		self.stop = stop
@@ -236,47 +237,48 @@ class SQLElement:
 		"""
 		Using self.relations, determine tables and relations for this element into self.jointables
 		"""
-		self._resolve_relation_dfs(0)
+		self._resolve_subrelations(0)
 		print('JOINS:')
 		for basetable, relations in self._temp_jointables[0].items():
 			self.jointables[basetable] = relations
 			print(basetable)
 			for r in relations:
 				print('\t{}'.format(r))
-	
-	def _resolve_relation_dfs(self, jointable_node: dict) -> None:
+
+	def _resolve_subrelations(self, jointable_node: int):
 		"""
 		Resolve nested jointable nodes for _resolve_tablevar_relations
 		"""
-		# TODO: 2026-02-16 take a look at arranging symbolics on same line if nested with other ops
-		# DATEADD<@18> BETWEEN X AND Y:
-		# '(cte5.datevar1)', 'mytable4.date1 - mytable4.date2', should be within the same line
+		# TODO:
+		# mytable4
+        # mytable3.key3 - mytable4.key1
+        # ((mytable4.key2)) <- this recursion not happening correctly now
+		retval = None
 		self._temp_jointables.setdefault(jointable_node, {})
 		for basetable, tablevars in self.relations[jointable_node].items():
-			self._temp_jointables[jointable_node].setdefault(basetable, [])
 			for linerelation in tablevars:
-				linevalues = {basetable: []}
-				for op_clause in linerelation:
-					op_clause_concats = []
-					for table, var in op_clause:
-						symb_match = globals.TSQL_SYMBOLIC.search(var)
-						if var.strip().upper() in globals.ODBC_KEYWORDS:
-							continue
-						elif symb_match:
-							symb = int(symb_match.group('symb'))
-							self._resolve_relation_dfs(symb)
-							# After DFS, self._temp_jointables will have data for child nodes
-							for sub_basetable, valuelist in self._temp_jointables[symb].items():
-								for value in valuelist:
-									linevalues[sub_basetable].append('({})'.format(value))
+				join_clauses = []
+				for element in linerelation:
+					for table, var in element:
+						value = None
+						if table:
+							value = '.'.join([table, var])
 						else:
-							value = '.'.join([table, var]) if table else '?.{}'.format(var)
-							op_clause_concats.append(value)
-					if op_clause_concats:
-						linevalues[basetable].append(' - '.join(op_clause_concats))
-				for table, valuelist in linevalues.items():
-					for value in valuelist:
-						self._temp_jointables[jointable_node][table].append(value)
+							symb_match = globals.TSQL_SYMBOLIC.search(var)
+							if var.strip().upper() in globals.ODBC_KEYWORDS:
+								continue
+							elif symb_match:
+								symb = int(symb_match.group('symb'))
+								value = self._resolve_subrelations(symb)
+							else:
+								value = '?.{}'.format(var)
+						if not value:
+							raise ValueError("Value in subrelation is None: {}".format(element))
+						retval = value
+						join_clauses.append(value)
+				if join_clauses:
+					self._temp_jointables[jointable_node].setdefault(basetable, []).append(' - '.join(join_clauses))
+		return '({})'.format(retval)
 					
 	def _non_subquery_dfs(self, substring: str, opens: deque, seen: set) -> None:
 		"""
