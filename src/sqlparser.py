@@ -249,11 +249,7 @@ class SQLElement:
 		"""
 		Resolve nested jointable nodes for _resolve_tablevar_relations
 		"""
-		# TODO:
-		# mytable4
-        # mytable3.key3 - mytable4.key1
-        # ((mytable4.key2)) <- this recursion not happening correctly now
-		retval = None
+		retstring = None
 		self._temp_jointables.setdefault(jointable_node, {})
 		for basetable, tablevars in self.relations[jointable_node].items():
 			for linerelation in tablevars:
@@ -274,11 +270,13 @@ class SQLElement:
 								value = '?.{}'.format(var)
 						if not value:
 							raise ValueError("Value in subrelation is None: {}".format(element))
-						retval = value
 						join_clauses.append(value)
 				if join_clauses:
-					self._temp_jointables[jointable_node].setdefault(basetable, []).append(' - '.join(join_clauses))
-		return '({})'.format(retval)
+					retval = ' - '.join(join_clauses)
+					self._temp_jointables[jointable_node].setdefault(basetable, []).append(retval)
+			if basetable in self._temp_jointables[jointable_node]:
+				retstring = ' | '.join(self._temp_jointables[jointable_node][basetable])
+		return '({})'.format(retstring)
 					
 	def _non_subquery_dfs(self, substring: str, opens: deque, seen: set) -> None:
 		"""
