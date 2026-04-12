@@ -157,6 +157,7 @@ class SQLElement:
 		self.jointables = {}
 		self.aliases = {}
 		self.relations = {}
+		self.table_dependencies = {}
 		self.non_subqueries = non_subqueries
 
 		print('\n{}'.format(text))
@@ -168,7 +169,7 @@ class SQLElement:
 		elif keyword == 'FROM':
 			self._parse_joins(text)
 		elif keyword == 'WHERE':
-			x = 1
+			x = 1  # TODO: 2026-04-12
 		elif keyword == 'OFFSET':
 			x = 1
 		elif keyword == 'FETCH':
@@ -183,6 +184,7 @@ class SQLElement:
 		print('ALIASES: ', self.aliases)
 		print('JOINS: ', self.jointables)
 		print('UNCLAIMEDVARS: ', self._unclaimedvars)
+		print('TABLE DEPENDENCIES: ', self.table_dependencies)
 	
 	def _parse_joins(self, sql_text: str) -> None:
 		"""
@@ -230,6 +232,7 @@ class SQLElement:
 		# DFS to resolve table relations
 		# TODO: could leave it as self.relations and move this DFS to outer (tree) scope
 		# 		so ambiguous fields can be resolved to a table first
+		# TODO: alias resolution during table resolution?
 		self._resolve_tablevar_relations()
 		
 	
@@ -252,12 +255,16 @@ class SQLElement:
 		retstring = None
 		self._temp_jointables.setdefault(jointable_node, {})
 		for basetable, tablevars in self.relations[jointable_node].items():
+			self.table_dependencies.setdefault(basetable, set())
 			for linerelation in tablevars:
 				join_clauses = []
 				for element in linerelation:
 					for table, var in element:
 						value = None
 						if table:
+							# TODO: alias resolution here if needed
+							if basetable != table:
+								self.table_dependencies[basetable].add(table)
 							value = '.'.join([table, var])
 						else:
 							symb_match = globals.TSQL_SYMBOLIC.search(var)
