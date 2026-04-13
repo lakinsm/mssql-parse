@@ -169,7 +169,7 @@ class SQLElement:
 		elif keyword == 'FROM':
 			self._parse_joins(text)
 		elif keyword == 'WHERE':
-			x = 1  # TODO: 2026-04-12
+			self._parse_wheres(text)
 		elif keyword == 'OFFSET':
 			x = 1
 		elif keyword == 'FETCH':
@@ -185,6 +185,25 @@ class SQLElement:
 		print('JOINS: ', self.jointables)
 		print('UNCLAIMEDVARS: ', self._unclaimedvars)
 		print('TABLE DEPENDENCIES: ', self.table_dependencies)
+	
+	def _parse_wheres(self, sql_text: str) -> None:
+		print("\tTHIS WHERE: {}".format(sql_text))
+		
+		expanded = set()
+		child_q = deque([sql_text])
+		# TODO: 2026-04-12 modify _non_subquery_dfs for where clauses
+		# Find table relations in non-subquery
+		opens = deque([0])
+		# while child_q:
+		# 	self._non_subquery_dfs(child_q.popleft(), opens, expanded)
+		print(self.relations)
+
+		# if jointype.upper() == 'FROM':
+		# 	basetable = globals.TSQL_JOIN_BASETABLE.search(clause_text).group('basetable')
+		# 	self.relations[0].setdefault(basetable, [])
+		# 	print('Basetable: {}'.format(basetable))  # TODO: add to relation data
+		# # DFS to resolve table relations
+		# self._resolve_tablevar_relations()  # <-- is this needed for WHERE?
 	
 	def _parse_joins(self, sql_text: str) -> None:
 		"""
@@ -227,7 +246,8 @@ class SQLElement:
 			if jointype.upper() == 'FROM':
 				basetable = globals.TSQL_JOIN_BASETABLE.search(clause_text).group('basetable')
 				self.relations[0].setdefault(basetable, [])
-				print('Basetable: {}'.format(basetable))  # TODO: add to relation data
+				self.jointables[basetable] = []
+				print('Basetable: {}'.format(basetable))  # TODO: handle cases of multiple FROM tables
 		print(self.relations)
 		# DFS to resolve table relations
 		# TODO: could leave it as self.relations and move this DFS to outer (tree) scope
@@ -241,12 +261,15 @@ class SQLElement:
 		Using self.relations, determine tables and relations for this element into self.jointables
 		"""
 		self._resolve_subrelations(0)
-		print('JOINS:')
+		print('FROM/JOIN TABLES:')
+		basetables = [k for k, v in self.jointables.items() if len(v) == 0]
+		for b in basetables:
+			print(b)
 		for basetable, relations in self._temp_jointables[0].items():
 			self.jointables[basetable] = relations
 			print(basetable)
 			for r in relations:
-				print('\t{}'.format(r))
+				print('\t{}'.format(r))  # TODO: order join so basetable comes first or last?
 
 	def _resolve_subrelations(self, jointable_node: int):
 		"""
@@ -740,6 +763,11 @@ class SQLTree:
 
 		# Initiatlize symbolic query and SQLNode objects
 		self._init_symbolic_query()
+		# for k, v in self.symbolic_clauses.items():
+		# 	print(k, v)
+		# print("\nSubqueries: ")
+		# for k, v in self.subqueries.items():
+		# 	print(k, v)
 
 		# Identify subqueries and CTEs
 		for node in self.dfs.node_order:
@@ -767,7 +795,11 @@ class SQLTree:
 				if cte_flag:
 					cte_val = self.ctes[node] + ' - CTE'
 				elif subquery_flag:
-					cte_val = self.subqueries[node] + ' - SQ'
+					# print(start, stop, node, with_context)
+					sq_name = self.subqueries[node]
+					if not sq_name:
+						sq_name = "UNNAMED"
+					cte_val = sq_name + ' - SQ'
 				else:
 					cte_val = ''
 				# print('{}\t{}'.format('({}){}'.format(cte_val, node), '{} {} {}'.format( pretext, self.symbolic_clauses[node], posttext)))
@@ -1027,6 +1059,20 @@ if __name__ == '__main__':
 			JOIN cte6
 				USING (key1, [key2])
 			WHERE unnamedvar1 = 'othervalue1'
+		),
+		cte7 AS
+		(
+			SELECT
+				ROW_NUMBER() OVER (PARTITION mytable1.field2 ORDER BY mytable1.field3 DESC)
+			FROM mytable1
+		),
+		cte8 AS
+		(
+			SELECT
+				SUM(aliasmt2.field2),
+				COUNT(*)
+			FROM mytable2 aliasmt2
+			GROUP BY mytable2.field2
 		)
 		SELECT 
 			mytable1.*,
@@ -1034,7 +1080,12 @@ if __name__ == '__main__':
 			mytable2.bar1 b1,
 			mytable3.foo1 AS "t3foo1",
 			mytable4.bar2,  -- Example comment
-			mytable5.*
+			mytable5.*,
+			(
+				SELECT TOP 1 mytable7.rank
+				FROM mytable7 mt7
+				WHERE mt7.othervalue5 <> 'ExcludeVal'
+			) mt7ranktopval
 		FROM mytable1
 		JOIN mytable2
 			ON mytable1.key1 = mytable2.key1
@@ -1086,6 +1137,14 @@ if __name__ == '__main__':
 		WHERE 
 			mytable3.field5 = "bar4"
 			AND mytable4.date1 BETWEEN mytable4.date1 AND '2100-01-01'
+			AND 
+			(
+				SELECT TOP 1 mt3.field4 
+				FROM mytable3 mt3 
+				JOIN mytable4 mt4 
+					ON mt3.field1 = mt4.field1 
+				WHERE mt4.field2 = 'Example'
+			) = mytable4.date1
 		ORDER BY mytable1.key1 DESC;  -- Order by request of end users
 		
 		END
