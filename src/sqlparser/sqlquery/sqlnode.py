@@ -1,6 +1,13 @@
 import re
 import sys
-from src import globals
+import sqlparser.globals
+from sqlparser.sqlquery.sqlprepost import SQLPrePost
+from sqlparser.sqlquery.sqloffset import SQLOffset
+from sqlparser.sqlquery.sqlfetch import SQLFetch
+from sqlparser.sqlquery.sqlwhere import SQLWhere
+from sqlparser.sqlquery.sqlselect import SQLSelect
+from sqlparser.sqlquery.sqlwith import SQLWith
+from sqlparser.sqlquery.sqlfromjoin import SQLFromJoin
 
 
 class SQLNode:
@@ -45,11 +52,22 @@ class SQLNode:
 			- Suffix: IF/IF NOT EXISTS
 	"""
 	def __init__(self, query_text: str, non_subqueries: dict) -> None:
-		self.issql = self.issql(query_text)
-		self.row_ops = [(m.group(1), m.start(), m.end()) for m in globals.TSQL_ROWOPS.finditer(query_text)]
+		self.issql = sqlparser.globals.issql(query_text)
+		self.row_ops = [(m.group(1), m.start(), m.end()) for m in sqlparser.globals.TSQL_ROWOPS.finditer(query_text)]
 		self.internal_degree = len(self.row_ops) + 1
 		self.query_text = []
 		self.non_subqueries = non_subqueries
+		self.element_types = {
+			'PRETEXT': SQLPrePost,
+			'WITH': SQLWith,
+			'SELECT': SQLSelect,
+			'FROM': SQLFromJoin,
+			'WHERE': SQLWhere,
+			'GROUP BY': SQLPrePost,
+			'ORDER BY': SQLPrePost,
+			'OFFSET': SQLOffset,
+			'FETCH': SQLFetch
+        }
 		if self.row_ops:
 			self.query_text.append(query_text[:self.row_ops[0][1]])
 			for i in range(len(self.row_ops)):
@@ -64,7 +82,7 @@ class SQLNode:
 		for r in range(self.internal_degree):
 			statement_boundaries.append({})
 			keyword_breaks = [(m.start(), m.group(1).upper()) 
-								for m in globals.TSQL_STATEMENTS.finditer(self.query_text[r])]
+								for m in sqlparser.globals.TSQL_STATEMENTS.finditer(self.query_text[r])]
 			for i in range(len(keyword_breaks)):
 				start, keyword = keyword_breaks[i]
 				if i == 0:
@@ -91,7 +109,7 @@ class SQLNode:
 		for r in range(self.internal_degree):
 			for keyword, breaks in statement_boundaries[r].items():
 				for start, stop in breaks:
-					self.clause[r][keyword] = SQLElement(  # TDOO: need a case/switch here to determine class
+					self.clause[r][keyword] = self.element_types[keyword](  # TDOO: need a case/switch here to determine class
 						keyword,
 						start,
 						stop,

@@ -1,8 +1,8 @@
 import re
 import test_cases
-from sqlquery.dfs import DFS
-from sqlquery.sqltree import SQLTree
-from sqlquery.sqlnode import SQLNode
+from sqlparser.sqlquery.dfs import DFS
+from sqlparser.sqlquery.sqltree import SQLTree
+from sqlparser.sqlquery.sqlnode import SQLNode
 
 
 def main():

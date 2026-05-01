@@ -1,9 +1,9 @@
 from collections import deque
 import re
 import sys
-from src import globals
-from sqlnode import SQLNode
-from dfs import DFS
+import sqlparser.globals
+from sqlparser.sqlquery.sqlnode import SQLNode
+from sqlparser.sqlquery.dfs import DFS
 
 
 class SQLTree:
@@ -32,8 +32,8 @@ class SQLTree:
 		self._ignore_idxs = set()
 		self._pprint = pprint
 		self._outer_statements = []
-		self._typemap = globals.TYPEMAP
-		self._sqlkeywords = globals.ODBC_KEYWORDS
+		self._typemap = sqlparser.globals.TYPEMAP
+		self._sqlkeywords = sqlparser.globals.ODBC_KEYWORDS
 		self.variables = {}
 		self.tree = {}
 		self.root = SQLNode
@@ -105,12 +105,12 @@ class SQLTree:
 					with_context, 
 					node
 				)
-				subquery_flag = globals.issubquery(self.symbolic_clauses[node], require_name=False)
+				subquery_flag = sqlparser.globals.issubquery(self.symbolic_clauses[node], require_name=False)
 
 				if cte_flag:
-					self.ctes[node] = globals.isnamed(with_context)[1][0]
+					self.ctes[node] = sqlparser.globals.isnamed(with_context)[1][0]
 				if subquery_flag:
-					subquery_name = globals.isnamed(with_context)
+					subquery_name = sqlparser.globals.isnamed(with_context)
 					if subquery_name[0]:
 						self.subqueries[node] = subquery_name[1][0]
 					else:
@@ -258,7 +258,7 @@ class SQLTree:
 		
 		Items 1-3 are checked by issubquery(), and 4 is checked here against the working_query outer scope
 		"""
-		subquery = globals.issubquery(query_text, require_name=True)
+		subquery = sqlparser.globals.issubquery(query_text, require_name=True)
 		try:
 			with_end = re.search(r'\s?with\s', self.working_query, flags=re.IGNORECASE | re.MULTILINE).end()
 		except AttributeError:

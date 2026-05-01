@@ -385,13 +385,60 @@ def issubquery(query_text: str, require_name: bool = False) -> bool:
 
 
 def issql(query_text: str) -> bool:
-		"""
-		Does this "node" contain an outer-scope SELECT statement?
-		"""
-		quote_idxs = [m.start() for m in re.finditer('[\'"]', query_text)]
-		assert(len(quote_idxs) % 2 == 0)
-		ignore_idxs = set([y for x in [list(range(quote_idxs[i], quote_idxs[i+1])) 
-											for i in range(0, len(quote_idxs), 2)] 
-								for y in x])
-		query_nostring = ''.join(x for i, x in enumerate(query_text) if i not in ignore_idxs)
-		return bool(re.search(r'select', query_nostring, flags=re.IGNORECASE))
+	"""
+	Does this "node" contain an outer-scope SELECT statement?
+	"""
+	quote_idxs = [m.start() for m in re.finditer('[\'"]', query_text)]
+	assert(len(quote_idxs) % 2 == 0)
+	ignore_idxs = set([y for x in [list(range(quote_idxs[i], quote_idxs[i+1])) 
+										for i in range(0, len(quote_idxs), 2)] 
+							for y in x])
+	query_nostring = ''.join(x for i, x in enumerate(query_text) if i not in ignore_idxs)
+	return bool(re.search(r'select', query_nostring, flags=re.IGNORECASE))
+
+
+def extract_between(clause_text: str) -> tuple:
+	"""
+	Extract clauses of format X BETWEEN Y AND Z.
+	"""
+	return((m.span('between'), m.span('and')) for m in TSQL_BETWEEN_AND.finditer(clause_text))
+	
+
+def extract_tablevar(rhslhs_text: str) -> tuple[str, str]:
+	"""
+	Return table - var relation if present (no alias searching here),
+	otherwise return (None, var).  Symbolics are included as vars.
+	"""
+	seen = set()
+	seen_idxs = set()
+	table_vars = tuple()
+	for m in TSQL_RHSLHS_VARTABLE_NAMED.finditer(rhslhs_text):
+		table, var = m.group('table', 'varname')
+		spans = [x for x in [m.start('table'), m.end('table'), m.start('varname'), m.end('varname')] if x is not None]
+		match_start, match_end = min(spans), max(spans)
+		match_idxs = set(x for x in range(match_start, match_end))
+		unique = '-'.join([x if x else '' for x in (table, var)])
+		if (unique not in seen) and not (seen_idxs.intersection(match_idxs)):
+			table_vars += (table, var),
+			seen.add(unique)
+			seen_idxs.update(match_idxs)
+	for m in TSQL_RHSLHS_VARTABLE_UNNAMED.finditer(rhslhs_text):
+		var = m.group('varname')
+		match_idxs = set(x for x in range(m.start('varname'), m.end('varname')))
+		unique = '-'.join([x if x else '' for x in (None, var)])
+		if (unique not in seen) and not (seen_idxs.intersection(match_idxs)):
+			table_vars += (None, var),
+			seen.add(unique)
+			seen_idxs.update(match_idxs)
+	if not table_vars:
+		table_vars += (None, None),
+	return table_vars
+
+
+def with_outer_symbolics(clause_text: str) -> str:
+	"""
+	Return the clause_text with only top-level symbolics; remove nested symbolics.
+	"""
+	matches = TSQL_SYMBOLIC_OUTER.finditer(clause_text)
+	exclude_idxs = set(x for y in (range(m.end('outer_symb'), m.end()) for m in matches) for x in y)
+	return ''.join(x for i, x in enumerate(clause_text) if i not in exclude_idxs)
