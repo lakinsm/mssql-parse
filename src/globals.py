@@ -315,4 +315,83 @@ TYPEMAP = {
 	'YEAR': 'TEXT'
 }
 
+def isnamed(query_text: str) -> tuple[bool, list]:
+	"""
+	Is this (sub-)query or SQL element named (adjacent to an AS)?
 
+	Returns: (bool, [str(element_name),]) if prefix/suffix
+				(bool, [(str(col_nam), str(alias_name),]) if object
+	"""
+	# Check prefix/suffix for subqueries/CTEs
+	prefix = TSQL_SUBQUERY_ALIAS_PREFIX.search(query_text)
+	suffix = TSQL_SUBQUERY_ALIAS_SUFFIX.search(query_text)
+
+	# Check for tables/vars with aliases
+	object_matches = []
+	consumed = set()
+	# 1. table.var AS? alias
+	for m in TSQL_VARTABLE_NAMED.finditer(query_text):
+		start = m.start()
+		stop = start + len(m.groups()[0])
+		match_interval = set(range(start, stop))
+		if not consumed.intersection(match_interval):
+			table, varname, alias = m.group('table', 'varname', 'alias')
+			if alias not in ODBC_KEYWORDS:
+				object_matches.append(('{}.{}'.format(table, varname), alias),)
+		consumed.update(match_interval)
+
+	# 2. var AS? alias
+	for m in TSQL_VAR_NAMED.finditer(query_text):
+		start = m.start()
+		stop = start + len(m.groups()[0])
+		match_interval = set(range(start, stop))
+		if not consumed.intersection(match_interval):
+			varname, alias = m.group('varname', 'alias')
+			if alias not in ODBC_KEYWORDS:
+				object_matches.append((varname, alias),)
+		consumed.update(match_interval)
+
+	query_val = [bool(x) for x in [prefix, suffix]]
+	true_count = query_val.count(True)
+	assert(true_count <= 1)
+	if true_count:
+		query_name = [prefix, suffix][query_val.index(True)]
+	ret_bool = True if any([prefix, suffix, object_matches]) else False
+	if ret_bool:
+		if any(query_val):
+			ret_val = [query_name.group(1)]
+		else:
+			ret_val = object_matches
+	else:
+		ret_val = []
+	return ret_bool, ret_val
+
+
+def issubquery(query_text: str, require_name: bool = False) -> bool:
+	"""
+	Determine if text is a TSQL subquery.
+
+	Assumptions:
+		- This query does not contain nested queries (remove or mask them ahead of time)
+		- Subqueries in TSQL must:
+			1. Be a subquery (contain a SELECT)
+			2. Begin and end with parentheses
+		- Subqueries can:
+			3. Be named
+	"""
+	query_flag = IS_SQL_QUERY.search(query_text) is not None
+	name = isnamed(query_text)[0] if require_name else True
+	return query_flag and name
+
+
+def issql(query_text: str) -> bool:
+		"""
+		Does this "node" contain an outer-scope SELECT statement?
+		"""
+		quote_idxs = [m.start() for m in re.finditer('[\'"]', query_text)]
+		assert(len(quote_idxs) % 2 == 0)
+		ignore_idxs = set([y for x in [list(range(quote_idxs[i], quote_idxs[i+1])) 
+											for i in range(0, len(quote_idxs), 2)] 
+								for y in x])
+		query_nostring = ''.join(x for i, x in enumerate(query_text) if i not in ignore_idxs)
+		return bool(re.search(r'select', query_nostring, flags=re.IGNORECASE))
