@@ -8,14 +8,13 @@ class SQLFromJoin(SQLElement):
 	"""
 	FROM/JOIN clause of a SQL (sub-)query.
 	"""
+
 	def parse(self, sql_text: str) -> None:
 		"""
 		Store table joins and relations.
 		"""
-		# Find keyword boundaries and parse each clause
-		join_boundaries = []
-		join_clauses = []
 		consumed = set()
+		join_boundaries = []
 		for m in sqlparser.globals.TSQL_JOIN_JOINTYPES.finditer(sql_text):
 			keyword_start = m.start('jointype')
 			clause_stop = keyword_start + len(m.group()[0])
@@ -25,6 +24,7 @@ class SQLFromJoin(SQLElement):
 				join_boundaries.append((keyword_start, jointype),)
 			consumed.update(match_interval)
 
+		join_clauses = []
 		for i in range(len(join_boundaries)):
 			start, jointype = join_boundaries[i]
 			if i == 0:
@@ -49,7 +49,7 @@ class SQLFromJoin(SQLElement):
 			if jointype.upper() == 'FROM':
 				basetable = sqlparser.globals.TSQL_JOIN_BASETABLE.search(clause_text).group('basetable')
 				self.relations[0].setdefault(basetable, [])
-				self.jointables[basetable] = []
+				self.tables[basetable] = []
 				print('Basetable: {}'.format(basetable))  # TODO: handle cases of multiple FROM tables
 		print(self.relations)
 		# DFS to resolve table relations
@@ -61,15 +61,15 @@ class SQLFromJoin(SQLElement):
 	
 	def resolve_tablevar_relations(self) -> None:
 		"""
-		Using self.relations, determine tables and relations for this element into self.jointables
+		Using self.relations, determine tables and relations for this element into self.tables
 		"""
 		self.resolve_subrelations(0)
 		print('FROM/JOIN TABLES:')
-		basetables = [k for k, v in self.jointables.items() if len(v) == 0]
+		basetables = [k for k, v in self.tables.items() if len(v) == 0]
 		for b in basetables:
 			print(b)
-		for basetable, relations in self._temp_jointables[0].items():
-			self.jointables[basetable] = relations
+		for basetable, relations in self._temp_tables[0].items():
+			self.tables[basetable] = relations
 			print(basetable)
 			for r in relations:
 				print('\t{}'.format(r))  # TODO: order join so basetable comes first or last?
@@ -79,7 +79,7 @@ class SQLFromJoin(SQLElement):
 		Resolve nested jointable nodes for _resolve_tablevar_relations
 		"""
 		retstring = None
-		self._temp_jointables.setdefault(jointable_node, {})
+		self._temp_tables.setdefault(jointable_node, {})
 		for basetable, tablevars in self.relations[jointable_node].items():
 			self.table_dependencies.setdefault(basetable, set())
 			for linerelation in tablevars:
@@ -106,9 +106,9 @@ class SQLFromJoin(SQLElement):
 						join_clauses.append(value)
 				if join_clauses:
 					retval = ' - '.join(join_clauses)
-					self._temp_jointables[jointable_node].setdefault(basetable, []).append(retval)
-			if basetable in self._temp_jointables[jointable_node]:
-				retstring = ' | '.join(self._temp_jointables[jointable_node][basetable])
+					self._temp_tables[jointable_node].setdefault(basetable, []).append(retval)
+			if basetable in self._temp_tables[jointable_node]:
+				retstring = ' | '.join(self._temp_tables[jointable_node][basetable])
 		return '({})'.format(retstring)
 					
 	def non_subquery_dfs(self, substring: str, opens: deque, seen: set) -> None:
@@ -137,7 +137,7 @@ class SQLFromJoin(SQLElement):
 		# Mask specific phrases
 		phrase_masks = set()
 		for (btwn_start, btwn_stop), (and_start, and_stop) in sqlparser.globals.extract_between(clause_text):
-			print(clause_text[btwn_start:and_stop])
+			print("\t\tBETWEEN Clause: {}".format(clause_text[btwn_start:and_stop]))
 			phrase_masks.update(set(range(btwn_start, btwn_stop)))
 			phrase_masks.update(set(range(and_start, and_stop)))
 		# Parse by major operator (AND|OR|NOT)
@@ -161,7 +161,7 @@ class SQLFromJoin(SQLElement):
 					self.relations[current_node].setdefault(self._basetables[current_node], [])
 				print('\t\tBasetable: {}'.format(self._basetables[current_node]))  # TODO: add to relation data
 				self.extract_ops(cond_clause_text, current_node)
-			else:  # Note that _extract_ops executes 1-2 times per loop for this fork
+			else:  # Note that extract_ops executes 1-2 times per loop for this fork
 				if i == 0:
 					cond_clause_text = clause_text[:start]
 					basetable = sqlparser.globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)

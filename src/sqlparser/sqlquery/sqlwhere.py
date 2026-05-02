@@ -17,19 +17,14 @@ class SQLWhere(SQLElement):
 		
 		expanded = set()
 		child_q = deque([sql_text])
-		# TODO: 2026-04-12 modify _non_subquery_dfs for where clauses
 		# Find table relations in non-subquery
 		opens = deque([0])
-		# while child_q:
-		# 	self.non_subquery_dfs(child_q.popleft(), opens, expanded)
-		# print(self.relations)
-
-		# if jointype.upper() == 'FROM':
-		# 	basetable = src.globals.TSQL_JOIN_BASETABLE.search(clause_text).group('basetable')
-		# 	self.relations[0].setdefault(basetable, [])
-		# 	print('Basetable: {}'.format(basetable))  # TODO: add to relation data
-		# # DFS to resolve table relations
-		# self._resolve_tablevar_relations()  # <-- is this needed for WHERE?
+		while child_q:
+			self.non_subquery_dfs(child_q.popleft(), opens, expanded)
+		self.relations[0].setdefault(self.keyword, [])
+		print(self.relations)
+		# DFS to resolve table relations
+		self.resolve_tablevar_relations()
 	
 	def resolve_tablevar_relations(self) -> None:
 		"""
@@ -37,11 +32,8 @@ class SQLWhere(SQLElement):
 		"""
 		self.resolve_subrelations(0)
 		print('WHERE TABLES:')
-		basetables = [k for k, v in self.jointables.items() if len(v) == 0]
-		for b in basetables:
-			print(b)
-		for basetable, relations in self._temp_jointables[0].items():
-			self.jointables[basetable] = relations
+		for basetable, relations in self._temp_tables[0].items():
+			self.tables[basetable] = relations
 			print(basetable)
 			for r in relations:
 				print('\t{}'.format(r))  # TODO: order join so basetable comes first or last?
@@ -51,7 +43,7 @@ class SQLWhere(SQLElement):
 		Resolve nested jointable nodes for _resolve_tablevar_relations
 		"""
 		retstring = None
-		self._temp_jointables.setdefault(jointable_node, {})
+		self._temp_tables.setdefault(jointable_node, {})
 		for basetable, tablevars in self.relations[jointable_node].items():
 			self.table_dependencies.setdefault(basetable, set())
 			for linerelation in tablevars:
@@ -70,7 +62,11 @@ class SQLWhere(SQLElement):
 								continue
 							elif symb_match:
 								symb = int(symb_match.group('symb'))
-								value = self.resolve_subrelations(symb)
+								# When this moves to SQLTree, need other logcial branch for subqueries
+								if symb in self.non_subqueries:  
+									value = self.resolve_subrelations(symb)
+								else:
+									value = '?.{}'.format(var)  # temp until SQLTree implementation
 							else:
 								value = '?.{}'.format(var)
 						if not value:
@@ -78,9 +74,9 @@ class SQLWhere(SQLElement):
 						join_clauses.append(value)
 				if join_clauses:
 					retval = ' - '.join(join_clauses)
-					self._temp_jointables[jointable_node].setdefault(basetable, []).append(retval)
-			if basetable in self._temp_jointables[jointable_node]:
-				retstring = ' | '.join(self._temp_jointables[jointable_node][basetable])
+					self._temp_tables[jointable_node].setdefault(basetable, []).append(retval)
+			if basetable in self._temp_tables[jointable_node]:
+				retstring = ' | '.join(self._temp_tables[jointable_node][basetable])
 		return '({})'.format(retstring)
 					
 	def non_subquery_dfs(self, substring: str, opens: deque, seen: set) -> None:
@@ -109,7 +105,7 @@ class SQLWhere(SQLElement):
 		# Mask specific phrases
 		phrase_masks = set()
 		for (btwn_start, btwn_stop), (and_start, and_stop) in sqlparser.globals.extract_between(clause_text):
-			print(clause_text[btwn_start:and_stop])
+			print("\t\tBETWEEN Clause: {}".format(clause_text[btwn_start:and_stop]))
 			phrase_masks.update(set(range(btwn_start, btwn_stop)))
 			phrase_masks.update(set(range(and_start, and_stop)))
 		# Parse by major operator (AND|OR|NOT)
@@ -123,24 +119,15 @@ class SQLWhere(SQLElement):
 		cond_clause_starts = [x for i, x in enumerate(cond_clause_starts) if i not in phrase_mask_idxs]
 		if not cond_clause_starts:
 			cond_clause_starts = [(None, None)]
+		self._basetables[current_node] = self.keyword
+		self.relations[current_node].setdefault(self._basetables[current_node], [])
 		for i in range(len(cond_clause_starts)):
 			start, stop = cond_clause_starts[i]
 			if start is None:
-				cond_clause_text = clause_text
-				basetable = sqlparser.globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
-				if basetable:
-					self._basetables[current_node] = basetable.group('basetable')
-					self.relations[current_node].setdefault(self._basetables[current_node], [])
-				print('\t\tBasetable: {}'.format(self._basetables[current_node]))  # TODO: add to relation data
-				self.extract_ops(cond_clause_text, current_node)
+				self.extract_ops(clause_text, current_node)
 			else:  # Note that _extract_ops executes 1-2 times per loop for this fork
 				if i == 0:
 					cond_clause_text = clause_text[:start]
-					basetable = sqlparser.globals.TSQL_JOIN_BASETABLE.search(cond_clause_text)
-					if basetable:
-						self._basetables[current_node] = basetable.group('basetable')
-						self.relations[current_node].setdefault(self._basetables[current_node], [])
-					print('\t\tBasetable: {}'.format(self._basetables[current_node]))  # TODO: add to relation data
 					self.extract_ops(cond_clause_text, current_node)
 				if (i+1) == len(cond_clause_starts):
 					cond_clause_text = clause_text[stop:]

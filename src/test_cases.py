@@ -146,7 +146,7 @@ example3_comments = """
 			AND cte5.datevar2 = @mydate1
 		WHERE 
 			mytable3.field5 = "bar4"
-			AND mytable4.date1 BETWEEN mytable4.date1 AND '2100-01-01'
+			AND mytable4.date1 BETWEEN cte5.datevar2 AND '2100-01-01'
 			AND 
 			(
 				SELECT TOP 1 mt3.field4 

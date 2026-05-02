@@ -9,7 +9,7 @@ class SQLSelect(SQLElement):
 	Description
 	"""
 	def parse(self, sql_text: str) -> None:
-		pass
+		self.parse_tables_vars(sql_text)
 
 	def resolve_tablevar_relations(self) -> None:
 		pass

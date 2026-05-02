@@ -10,14 +10,14 @@ class SQLElement(ABC):
 	def __init__(self, keyword: str, start: int, stop: int, text: str, non_subqueries: dict):
 		self._unclaimedvars = set()
 		self._basetables = {}
-		self._temp_jointables = {}
+		self._temp_tables = {}
 		self._temp_symbtables = {}
 		self.keyword = keyword
 		self.text = text
 		self.start = start
 		self.stop = stop
 		self.selecttables = {}
-		self.jointables = {}
+		self.tables = {}
 		self.aliases = {}
 		self.relations = {}
 		self.table_dependencies = {}
@@ -71,7 +71,7 @@ class SQLElement(ABC):
 			if not consumed.intersection(match_interval):
 				table, varname, alias = m.group('table', 'varname', 'alias')
 				self.selecttables.setdefault(table, set()).add(varname)
-				if alias not in globals.ODBC_KEYWORDS:
+				if alias not in sqlparser.globals.ODBC_KEYWORDS:
 					self.aliases[alias] = (varname, table)
 			consumed.update(match_interval)
 
@@ -93,7 +93,7 @@ class SQLElement(ABC):
 			if not consumed.intersection(match_interval):
 				varname, alias = m.group('varname', 'alias')
 				self._unclaimedvars.add(varname)
-				if alias not in globals.ODBC_KEYWORDS:
+				if alias not in sqlparser.globals.ODBC_KEYWORDS:
 					self.aliases[alias] = (varname, None)  # table will be resolved in SQLNode
 			consumed.update(match_interval)
 
