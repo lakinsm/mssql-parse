@@ -30,6 +30,7 @@ class SQLWhere(SQLElement):
 		"""
 		Using self.relations, determine tables and relations for this element
 		"""
+		# TODO: 2026-05-02 after all SQLElement implementations, move this to SQLTree scope
 		self.resolve_subrelations(0)
 		print('WHERE TABLES:')
 		for basetable, relations in self._temp_tables[0].items():
