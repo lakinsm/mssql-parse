@@ -13,8 +13,6 @@ class SQLWhere(SQLElement):
 		"""
 		Store table row filters and relations
 		"""
-		print("\tTHIS WHERE: {}".format(sql_text))
-		
 		expanded = set()
 		child_q = deque([sql_text])
 		# Find table relations in non-subquery
@@ -22,7 +20,6 @@ class SQLWhere(SQLElement):
 		while child_q:
 			self.non_subquery_dfs(child_q.popleft(), opens, expanded)
 		self.relations[0].setdefault(self.keyword, [])
-		print(self.relations)
 		# DFS to resolve table relations
 		self.resolve_tablevar_relations()
 	
@@ -32,12 +29,10 @@ class SQLWhere(SQLElement):
 		"""
 		# TODO: 2026-05-02 after all SQLElement implementations, move this to SQLTree scope
 		self.resolve_subrelations(0)
-		print('WHERE TABLES:')
 		for basetable, relations in self._temp_tables[0].items():
 			self.tables[basetable] = relations
-			print(basetable)
 			for r in relations:
-				print('\t{}'.format(r))  # TODO: order join so basetable comes first or last?
+				pass
 
 	def resolve_subrelations(self, jointable_node: int):
 		"""
@@ -102,11 +97,9 @@ class SQLWhere(SQLElement):
 		"""
 		Extract table/column relations, intended for from/join clauses.
 		"""
-		print('\tNode: {}\t{}'.format(current_node, clause_text))
 		# Mask specific phrases
 		phrase_masks = set()
 		for (btwn_start, btwn_stop), (and_start, and_stop) in sqlparser.globals.extract_between(clause_text):
-			print("\t\tBETWEEN Clause: {}".format(clause_text[btwn_start:and_stop]))
 			phrase_masks.update(set(range(btwn_start, btwn_stop)))
 			phrase_masks.update(set(range(and_start, and_stop)))
 		# Parse by major operator (AND|OR|NOT)
@@ -135,7 +128,6 @@ class SQLWhere(SQLElement):
 				else:
 					next_start = cond_clause_starts[i+1][0]
 					cond_clause_text = clause_text[stop:next_start]
-				print('\t\tMAJOP Clause: {}'.format(cond_clause_text))
 				self.extract_ops(cond_clause_text, current_node)
 	
 	def extract_ops(self, op_clause: str, current_node: int) -> None:
@@ -145,7 +137,6 @@ class SQLWhere(SQLElement):
 		# Parse further by comparison operator -> LHS - RHS
 		op_match = sqlparser.globals.TSQL_JOIN_ALLOPS.finditer(op_clause)
 		op_starts = [m.span('op') for m in op_match]
-		print('\t\t\tOp: {}'.format([x.group('op') for x in sqlparser.globals.TSQL_JOIN_ALLOPS.finditer(op_clause)]))
 		if not self._basetables[current_node]:
 			sys.stderr.write('ERROR: No basetable found for node {} conditional clause: {}\n'.format(
 				current_node, 
@@ -154,7 +145,6 @@ class SQLWhere(SQLElement):
 			raise ValueError
 		if not op_starts:
 			relations = sqlparser.globals.extract_tablevar(op_clause)
-			print('\t\t\tRelations: {}'.format(relations))
 			self.relations[current_node].setdefault(self._basetables[current_node], []).append(((relations[0],),))
 		else:
 			# Note: for comparisons on the same precendence level, we do not care about
@@ -220,6 +210,4 @@ class SQLWhere(SQLElement):
 			ops = new_ops
 			relations = tuple()
 			relations += new_relations,
-			print('\t\t\tRelations: {}'.format(relations))
-			print('\t\t\tOps: {}'.format(ops))
 			self.relations[current_node].setdefault(self._basetables[current_node], []).append(tuple(relations))

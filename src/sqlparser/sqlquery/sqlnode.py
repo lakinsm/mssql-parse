@@ -57,6 +57,8 @@ class SQLNode:
 		self.internal_degree = len(self.row_ops) + 1
 		self.query_text = []
 		self.non_subqueries = non_subqueries
+		self.tables = {}
+		self.relations = {}
 		self.element_types = {
 			'PRETEXT': SQLPrePost,
 			'WITH': SQLWith,
@@ -95,7 +97,7 @@ class SQLNode:
 					next_start = keyword_breaks[i+1][0]
 					statement_boundaries[r].setdefault(keyword, []).append((start, next_start),)
 		
-		self.clause = [{
+		self.clauses = [{
 			'PRETEXT': None,
 			'WITH': None,
 			'SELECT': None,
@@ -109,14 +111,15 @@ class SQLNode:
 		for r in range(self.internal_degree):
 			for keyword, breaks in statement_boundaries[r].items():
 				for start, stop in breaks:
-					self.clause[r][keyword] = self.element_types[keyword](  # TDOO: need a case/switch here to determine class
+					self.clauses[r][keyword] = self.element_types[keyword]( 
 						keyword,
 						start,
 						stop,
 						self.query_text[r][start:stop],
 						self.non_subqueries
 					)
-		print(self.clause)
 		# TODO: resolve unclaimed vars within elements
 		# TODO: validate selects & by clauses with tables in from/joins
+		# TODO: validate row operations (requires same columns)
+		
 	

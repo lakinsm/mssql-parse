@@ -39,7 +39,6 @@ class SQLFromJoin(SQLElement):
 
 		for start, stop, jointype in join_clauses:
 			clause_text = sql_text[start:stop]
-			print(start, stop, jointype, '\t{}'.format(clause_text))
 			expanded = set()
 			child_q = deque([clause_text])
 			# Find table relations in non-subquery
@@ -50,8 +49,7 @@ class SQLFromJoin(SQLElement):
 				basetable = sqlparser.globals.TSQL_JOIN_BASETABLE.search(clause_text).group('basetable')
 				self.relations[0].setdefault(basetable, [])
 				self.tables[basetable] = []
-				print('Basetable: {}'.format(basetable))  # TODO: handle cases of multiple FROM tables
-		print(self.relations)
+				# TODO: handle cases of multiple FROM tables
 		# DFS to resolve table relations
 		# TODO: could leave it as self.relations and move this DFS to outer (tree) scope
 		# 		so ambiguous fields can be resolved to a table first
@@ -64,15 +62,11 @@ class SQLFromJoin(SQLElement):
 		Using self.relations, determine tables and relations for this element into self.tables
 		"""
 		self.resolve_subrelations(0)
-		print('FROM/JOIN TABLES:')
-		basetables = [k for k, v in self.tables.items() if len(v) == 0]
-		for b in basetables:
-			print(b)
+		# basetables = [k for k, v in self.tables.items() if len(v) == 0]
 		for basetable, relations in self._temp_tables[0].items():
 			self.tables[basetable] = relations
-			print(basetable)
 			for r in relations:
-				print('\t{}'.format(r))  # TODO: order join so basetable comes first or last?
+				pass
 
 	def resolve_subrelations(self, jointable_node: int):
 		"""
@@ -80,35 +74,36 @@ class SQLFromJoin(SQLElement):
 		"""
 		retstring = None
 		self._temp_tables.setdefault(jointable_node, {})
-		for basetable, tablevars in self.relations[jointable_node].items():
-			self.table_dependencies.setdefault(basetable, set())
-			for linerelation in tablevars:
-				join_clauses = []
-				for element in linerelation:
-					for table, var in element:
-						value = None
-						if table:
-							# TODO: alias resolution here if needed
-							if basetable != table:
-								self.table_dependencies[basetable].add(table)
-							value = '.'.join([table, var])
-						else:
-							symb_match = sqlparser.globals.TSQL_SYMBOLIC.search(var)
-							if var.strip().upper() in sqlparser.globals.ODBC_KEYWORDS:
-								continue
-							elif symb_match:
-								symb = int(symb_match.group('symb'))
-								value = self.resolve_subrelations(symb)
+		if self.relations:
+			for basetable, tablevars in self.relations[jointable_node].items():
+				self.table_dependencies.setdefault(basetable, set())
+				for linerelation in tablevars:
+					join_clauses = []
+					for element in linerelation:
+						for table, var in element:
+							value = None
+							if table:
+								# TODO: alias resolution here if needed
+								if basetable != table:
+									self.table_dependencies[basetable].add(table)
+								value = '.'.join([table, var])
 							else:
-								value = '?.{}'.format(var)
-						if not value:
-							raise ValueError("Value in subrelation is None: {}".format(element))
-						join_clauses.append(value)
-				if join_clauses:
-					retval = ' - '.join(join_clauses)
-					self._temp_tables[jointable_node].setdefault(basetable, []).append(retval)
-			if basetable in self._temp_tables[jointable_node]:
-				retstring = ' | '.join(self._temp_tables[jointable_node][basetable])
+								symb_match = sqlparser.globals.TSQL_SYMBOLIC.search(var)
+								if var.strip().upper() in sqlparser.globals.ODBC_KEYWORDS:
+									continue
+								elif symb_match:
+									symb = int(symb_match.group('symb'))
+									value = self.resolve_subrelations(symb)
+								else:
+									value = '?.{}'.format(var)
+							if not value:
+								raise ValueError("Value in subrelation is None: {}".format(element))
+							join_clauses.append(value)
+					if join_clauses:
+						retval = ' - '.join(join_clauses)
+						self._temp_tables[jointable_node].setdefault(basetable, []).append(retval)
+				if basetable in self._temp_tables[jointable_node]:
+					retstring = ' | '.join(self._temp_tables[jointable_node][basetable])
 		return '({})'.format(retstring)
 					
 	def non_subquery_dfs(self, substring: str, opens: deque, seen: set) -> None:
@@ -133,11 +128,9 @@ class SQLFromJoin(SQLElement):
 		"""
 		Extract table/column relations, intended for from/join clauses.
 		"""
-		print('\tNode: {}\t{}'.format(current_node, clause_text))
 		# Mask specific phrases
 		phrase_masks = set()
 		for (btwn_start, btwn_stop), (and_start, and_stop) in sqlparser.globals.extract_between(clause_text):
-			print("\t\tBETWEEN Clause: {}".format(clause_text[btwn_start:and_stop]))
 			phrase_masks.update(set(range(btwn_start, btwn_stop)))
 			phrase_masks.update(set(range(and_start, and_stop)))
 		# Parse by major operator (AND|OR|NOT)
@@ -159,7 +152,6 @@ class SQLFromJoin(SQLElement):
 				if basetable:
 					self._basetables[current_node] = basetable.group('basetable')
 					self.relations[current_node].setdefault(self._basetables[current_node], [])
-				print('\t\tBasetable: {}'.format(self._basetables[current_node]))  # TODO: add to relation data
 				self.extract_ops(cond_clause_text, current_node)
 			else:  # Note that extract_ops executes 1-2 times per loop for this fork
 				if i == 0:
@@ -168,14 +160,12 @@ class SQLFromJoin(SQLElement):
 					if basetable:
 						self._basetables[current_node] = basetable.group('basetable')
 						self.relations[current_node].setdefault(self._basetables[current_node], [])
-					print('\t\tBasetable: {}'.format(self._basetables[current_node]))  # TODO: add to relation data
 					self.extract_ops(cond_clause_text, current_node)
 				if (i+1) == len(cond_clause_starts):
 					cond_clause_text = clause_text[stop:]
 				else:
 					next_start = cond_clause_starts[i+1][0]
 					cond_clause_text = clause_text[stop:next_start]
-				print('\t\tMAJOP Clause: {}'.format(cond_clause_text))
 				self.extract_ops(cond_clause_text, current_node)
 	
 	def extract_ops(self, op_clause: str, current_node: int) -> None:
@@ -185,7 +175,6 @@ class SQLFromJoin(SQLElement):
 		# Parse further by comparison operator -> LHS - RHS
 		op_match = sqlparser.globals.TSQL_JOIN_ALLOPS.finditer(op_clause)
 		op_starts = [m.span('op') for m in op_match]
-		print('\t\t\tOp: {}'.format([x.group('op') for x in sqlparser.globals.TSQL_JOIN_ALLOPS.finditer(op_clause)]))
 		if not self._basetables[current_node]:
 			sys.stderr.write('ERROR: No basetable found for node {} conditional clause: {}\n'.format(
 				current_node, 
@@ -194,7 +183,6 @@ class SQLFromJoin(SQLElement):
 			raise ValueError
 		if not op_starts:
 			relations = sqlparser.globals.extract_tablevar(op_clause)
-			print('\t\t\tRelations: {}'.format(relations))
 			self.relations[current_node].setdefault(self._basetables[current_node], []).append(((relations[0],),))
 		else:
 			# Note: for comparisons on the same precendence level, we do not care about
@@ -260,7 +248,5 @@ class SQLFromJoin(SQLElement):
 			ops = new_ops
 			relations = tuple()
 			relations += new_relations,
-			print('\t\t\tRelations: {}'.format(relations))
-			print('\t\t\tOps: {}'.format(ops))
 			self.relations[current_node].setdefault(self._basetables[current_node], []).append(tuple(relations))
 			

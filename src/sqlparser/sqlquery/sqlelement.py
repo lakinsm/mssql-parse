@@ -103,6 +103,6 @@ class SQLElement(ABC):
 			stop = start + len(m.groups()[0])
 			match_interval = set(range(start, stop))
 			if not consumed.intersection(match_interval):
-				varname, alias = m.group('varname')
+				varname = m.group('varname')
 				self._unclaimedvars.add(varname)
 			consumed.update(match_interval)

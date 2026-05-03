@@ -36,7 +36,7 @@ class SQLTree:
 		self._sqlkeywords = sqlparser.globals.ODBC_KEYWORDS
 		self.variables = {}
 		self.tree = {}
-		self.root = SQLNode
+		self.sqlnodes = {}
 		self.original_query = full_query_text
 		self.flattened_query = None
 		self.symbolic_query = ''
@@ -88,11 +88,6 @@ class SQLTree:
 
 		# Initiatlize symbolic query and SQLNode objects
 		self._init_symbolic_query()
-		# for k, v in self.symbolic_clauses.items():
-		# 	print(k, v)
-		# print("\nSubqueries: ")
-		# for k, v in self.subqueries.items():
-		# 	print(k, v)
 
 		# Identify subqueries and CTEs
 		for node in self.dfs.node_order:
@@ -120,24 +115,23 @@ class SQLTree:
 				if cte_flag:
 					cte_val = self.ctes[node] + ' - CTE'
 				elif subquery_flag:
-					# print(start, stop, node, with_context)
 					sq_name = self.subqueries[node]
 					if not sq_name:
 						sq_name = "UNNAMED"
 					cte_val = sq_name + ' - SQ'
 				else:
 					cte_val = ''
-				# print('{}\t{}'.format('({}){}'.format(cte_val, node), '{} {} {}'.format( pretext, self.symbolic_clauses[node], posttext)))
-				# print('\n')
+		
+		# Initialize SQLNodes for queries and subqueries
+		for node in self.dfs.node_order:
+			if node not in self.non_subqueries:
+				self.sqlnodes[node] = SQLNode(self.symbolic_clauses[node], self.non_subqueries)
 
 	def __repr__(self) -> str:
 		"""
 		Print representation 
 		"""
-		if self._pprint:
-			return self._prettyprint()
-		else:
-			return self.working_query
+		return self.print()
 	
 	def _extract_variables(self, query_text:str) -> None:
 		"""
@@ -192,7 +186,6 @@ class SQLTree:
 		stack = deque()
 		level_op = 0
 		for node in self.dfs.bfs(descending=False):
-			# TODO: SQLNode creation
 			if node != 0:
 				start, stop = self.dfs.intervals[node]
 			else:
@@ -268,10 +261,20 @@ class SQLTree:
 		cte_scope = with_end <= self.symbolic_intervals[node][0] <= self.symbolic_intervals[node][1] <= select_idxs[0]
 		return subquery and cte_scope
 
-	def _prettyprint(self) -> str:
+	def print(self) -> None:
 		"""
 		Format query to be more readable using internal structure information
 		"""
+		for n, node in self.sqlnodes.items():
+			print('Node {}: {}'.format(n, self.symbolic_clauses[n]))
+			for c, clause in enumerate(node.clauses):
+				print('\tClause {}:'.format(c))
+				for keyword, element in clause.items():
+					if element:
+						if element.tables or element.relations:
+							print('\t\tKeyword: {}\tText: {}'.format(keyword, element.text))
+							print('\t\t\tTables: {}'.format(element.tables))
+							print('\t\t\tRelations: {}'.format(element.relations))
 	
 	def _remove_comments(self, query_text: str) -> str:
 		"""
