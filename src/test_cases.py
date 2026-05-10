@@ -73,7 +73,7 @@ example3_comments = """
 		cte7 AS
 		(
 			SELECT
-				ROW_NUMBER() OVER (PARTITION mytable1.field2 ORDER BY mytable1.field3 DESC)
+				ROW_NUMBER() OVER (PARTITION mytable1.field2 ORDER BY mytable1.field3 DESC) AS rnum
 			FROM mytable1
 		),
 		cte8 AS

@@ -17,7 +17,10 @@ class DFS:
 		self.traversal = ()  # Tuple: (node_idx, ) traversal order
 		self.node_order = ()  # Tuple: (node_idx, ) unique DFS node order
 
-		assert(len(starts) == len(stops))
+		if len(starts) != len(stops):
+			raise ValueError(
+				"Error: DFS|constructor() - start and stop indices not equal in length."
+			)
 		if not starts:
 			return
 		self._dfs(0)
