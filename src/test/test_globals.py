@@ -78,35 +78,35 @@ class TestGlobals:
 
 	def test_IS_SQL_QUERY(self):
 		test1 = "(SELECT) captures this"
-		soln1 = sqlparser.globals.IS_SQL_QUERY.match(test1)
+		soln1 = sqlparser.globals.IS_SQL_QUERY.search(test1)
 		assert(soln1 is not None)
 
 		test2 = "( SELECT) captures this"
-		soln2 = sqlparser.globals.IS_SQL_QUERY.match(test2)
+		soln2 = sqlparser.globals.IS_SQL_QUERY.search(test2)
 		assert(soln2 is not None)
 
 		test3 = "(select ) captures this"
-		soln3 = sqlparser.globals.IS_SQL_QUERY.match(test3)
+		soln3 = sqlparser.globals.IS_SQL_QUERY.search(test3)
 		assert(soln3 is not None)
 
 		test4 = "( *select ) does not capture this"
-		soln4 = sqlparser.globals.IS_SQL_QUERY.match(test4)
+		soln4 = sqlparser.globals.IS_SQL_QUERY.search(test4)
 		assert(soln4 is None)
 
 		test5 = "SELECT) does not capture this"
-		soln5 = sqlparser.globals.IS_SQL_QUERY.match(test5)
+		soln5 = sqlparser.globals.IS_SQL_QUERY.search(test5)
 		assert(soln5 is None)
 
 		test6 = "(select does not capture this"
-		soln6 = sqlparser.globals.IS_SQL_QUERY.match(test6)
+		soln6 = sqlparser.globals.IS_SQL_QUERY.search(test6)
 		assert(soln6 is None)
 
 		test7 = "select does not capture this"
-		soln7 = sqlparser.globals.IS_SQL_QUERY.match(test7)
+		soln7 = sqlparser.globals.IS_SQL_QUERY.search(test7)
 		assert(soln7 is None)
 
 		test8 = "( selected ) does not capture this"
-		soln8 = sqlparser.globals.IS_SQL_QUERY.match(test8)
+		soln8 = sqlparser.globals.IS_SQL_QUERY.search(test8)
 		assert(soln8 is None)
 	
 
@@ -162,11 +162,145 @@ class TestGlobals:
 
 
 	def test_TSQL_ROWOPS(self):
-		x = 1
+		test1 = "sql text UNION ALL sql text"
+		soln1 = sqlparser.globals.TSQL_ROWOPS.search(test1)
+		assert(soln1 is not None)
+		assert(soln1.start("rowop") == 9)
+		assert(soln1.end("rowop") == 18)
 
+		test2 = "INTERSECT does capture"
+		soln2 = sqlparser.globals.TSQL_ROWOPS.search(test2)
+		assert(soln2 is not None)
+		assert(soln2.start("rowop") == 0)
+		assert(soln2.end("rowop") == 9)
+
+		test3 = "(INTERSECT does capture"
+		soln3 = sqlparser.globals.TSQL_ROWOPS.search(test3)
+		assert(soln3 is not None)
+		assert(soln3.start("rowop") == 1)
+		assert(soln3.end("rowop") == 10)
+
+		test4 = "*INTERSECT does not capture"
+		soln4 = sqlparser.globals.TSQL_ROWOPS.search(test4)
+		assert(soln4 is None)
 
 	def test_TSQL_VARTABLE_NAMED(self):
-		x = 1
+		test1 = "select this.var as alias"
+		soln1 = sqlparser.globals.TSQL_VARTABLE_NAMED.search(test1)
+		assert(soln1 is not None)
+		assert(soln1.start("table") == 7)
+		assert(soln1.end("table") == 11)
+		assert(soln1.group("table") == "this")
+		assert(soln1.start("varname") == 12)
+		assert(soln1.end("varname") == 15)
+		assert(soln1.group("varname") == "var")
+		assert(soln1.start("alias") == 19)
+		assert(soln1.end("alias") == 24)
+		assert(soln1.group("alias") == "alias")
+		
+		test2 = "this.var as alias"
+		soln2 = sqlparser.globals.TSQL_VARTABLE_NAMED.search(test2)
+		assert(soln2 is not None)
+		assert(soln2.start("table") == 0)
+		assert(soln2.end("table") == 4)
+		assert(soln2.group("table") == "this")
+		assert(soln2.start("varname") == 5)
+		assert(soln2.end("varname") == 8)
+		assert(soln2.group("varname") == "var")
+		assert(soln2.start("alias") == 12)
+		assert(soln2.end("alias") == 17)
+		assert(soln2.group("alias") == "alias")
+
+		test3 = "this.var as alias FROM other text"
+		soln3 = sqlparser.globals.TSQL_VARTABLE_NAMED.search(test3)
+		assert(soln3 is not None)
+		assert(soln3.start("table") == 0)
+		assert(soln3.end("table") == 4)
+		assert(soln3.group("table") == "this")
+		assert(soln3.start("varname") == 5)
+		assert(soln3.end("varname") == 8)
+		assert(soln3.group("varname") == "var")
+		assert(soln3.start("alias") == 12)
+		assert(soln3.end("alias") == 17)
+		assert(soln3.group("alias") == "alias")
+
+		test4 = "this.var as 'alias'"
+		soln4 = sqlparser.globals.TSQL_VARTABLE_NAMED.search(test4)
+		assert(soln4 is not None)
+		assert(soln4.start("table") == 0)
+		assert(soln4.end("table") == 4)
+		assert(soln4.group("table") == "this")
+		assert(soln4.start("varname") == 5)
+		assert(soln4.end("varname") == 8)
+		assert(soln4.group("varname") == "var")
+		assert(soln4.start("alias") == 13)
+		assert(soln4.end("alias") == 18)
+		assert(soln4.group("alias") == "alias")
+
+		test5 = 'this.var as "alias"'
+		soln5 = sqlparser.globals.TSQL_VARTABLE_NAMED.search(test5)
+		assert(soln5 is not None)
+		assert(soln5.start("table") == 0)
+		assert(soln5.end("table") == 4)
+		assert(soln5.group("table") == "this")
+		assert(soln5.start("varname") == 5)
+		assert(soln5.end("varname") == 8)
+		assert(soln5.group("varname") == "var")
+		assert(soln5.start("alias") == 13)
+		assert(soln5.end("alias") == 18)
+		assert(soln5.group("alias") == "alias")
+
+		test6 = "[this.var] as alias"
+		soln6 = sqlparser.globals.TSQL_VARTABLE_NAMED.search(test6)
+		assert(soln6 is not None)
+		assert(soln6.start("table") == 1)
+		assert(soln6.end("table") == 5)
+		assert(soln6.group("table") == "this")
+		assert(soln6.start("varname") == 6)
+		assert(soln6.end("varname") == 9)
+		assert(soln6.group("varname") == "var")
+		assert(soln6.start("alias") == 14)
+		assert(soln6.end("alias") == 19)
+		assert(soln6.group("alias") == "alias")
+
+		test7 = '"this.var" alias'
+		soln7 = sqlparser.globals.TSQL_VARTABLE_NAMED.search(test7)
+		assert(soln7 is not None)
+		assert(soln7.start("table") == 1)
+		assert(soln7.end("table") == 5)
+		assert(soln7.group("table") == "this")
+		assert(soln7.start("varname") == 6)
+		assert(soln7.end("varname") == 9)
+		assert(soln7.group("varname") == "var")
+		assert(soln7.start("alias") == 11)
+		assert(soln7.end("alias") == 16)
+		assert(soln7.group("alias") == "alias")
+
+		test8 = 'SELECT mytable1.*, mytable2.foo1, mytable2.bar1 b1, mytable3.foo1 '
+		test8 += 'AS "t3foo1", mytable4.bar2, mytable5.* FROM mytable1'
+		soln8 = [
+			(
+				(m.start("table"), m.end("table"), m.group("table")),
+				(m.start("varname"), m.end("varname"), m.group("varname")),
+				(m.start("alias"), m.end("alias"), m.group("alias"))
+			)
+			for m in sqlparser.globals.TSQL_VARTABLE_NAMED.finditer(test8)
+
+		]
+		assert(soln8 is not None)
+		assert(len(soln8) == 2)  # TODO: write function that excludes keywords from group matches
+		print(soln8)
+
+
+		test3 = "var as alias"
+		test3 = "[var] as alias"
+		test3 = '"var" as alias'
+		test3 = "var as 'alias'"
+		test4 = 'var as "alias"'
+		test4 = "this.var"
+		test4 = "[this].var"
+		test4 = '"this".var'
+		
 
 
 	def test_TSQL_VARTABLE_UNNAMED(self):
