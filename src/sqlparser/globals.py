@@ -1,7 +1,7 @@
 import re
 
 TSQL_SYMBOLIC = re.compile(r'<@(?P<symb>[0-9]+)>', flags=re.MULTILINE)
-TSQL_SYMBOLIC_OUTER = re.compile(r'(?P<outer_symb><@[0-9]+>)[\.\^]?((<@[0-9]+>[\.\^-]?)+)?', flags=re.IGNORECASE | re.MULTILINE)
+TSQL_SYMBOLIC_OUTER = re.compile(r'(?P<outer_symb><@[0-9]+>)(?P<nested_symb>[\.\^]?(<@[0-9]+>[\.\^-]?)*)', flags=re.IGNORECASE | re.MULTILINE)
 IS_SQL_QUERY = re.compile(r'((\(.*?[\s]+|\()(?P<select>SELECT)([\s]+.*?\)|\)))', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_STATEMENTS = re.compile(r'(^|[\(\s]+)(?P<keyword>(WITH|SELECT|FROM|WHERE|GROUP BY|ORDER BY|OFFSET|FETCH))($|[\)\s]+)', flags=re.IGNORECASE | re.MULTILINE)
 TSQL_ROWOPS = re.compile(r'\s*(INTERSECT|EXCEPT|UNION ALL|UNION)\s*', flags=re.IGNORECASE | re.MULTILINE)
