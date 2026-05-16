@@ -1,5 +1,6 @@
 import pytest
 import sqlparser.globals
+import sqlparser.sqlquery.sqlregex
 import re
 
 
@@ -278,20 +279,19 @@ class TestGlobals:
 
 		test8 = 'SELECT mytable1.*, mytable2.foo1, mytable2.bar1 b1, mytable3.foo1 '
 		test8 += 'AS "t3foo1", mytable4.bar2, mytable5.* FROM mytable1'
+		vartable_named = sqlparser.sqlquery.sqlregex.SQLRegex(sqlparser.globals.TSQL_VARTABLE_NAMED)
+		vartable_named.finditer(test8)
 		soln8 = [
 			(
 				(m.start("table"), m.end("table"), m.group("table")),
 				(m.start("varname"), m.end("varname"), m.group("varname")),
 				(m.start("alias"), m.end("alias"), m.group("alias"))
 			)
-			for m in sqlparser.globals.TSQL_VARTABLE_NAMED.finditer(test8)
-
+			for m in vartable_named.finditer(test8)
 		]
 		assert(soln8 is not None)
-		assert(len(soln8) == 2)  # TODO: write function that excludes keywords from group matches
-		print(soln8)
-
-
+		assert(len(soln8) == 2)
+		
 		test3 = "var as alias"
 		test3 = "[var] as alias"
 		test3 = '"var" as alias'
